@@ -1,0 +1,148 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Server-side enforcement of: company-domain SSO, roles, and the approval chain
+//   User 1 (maker) → L1 (approver1) → L2 (approver2)
+//   → L3 (approver3) only if batch total > ₹20 lakh → Finance → Paid
+//
+// KEEP IN SYNC with src/config.ts:
+//   • companyDomain()  ↔ allowedDomains
+//   • threshold()      ↔ l3Threshold
+// ─────────────────────────────────────────────────────────────────────────────
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function companyDomain() { return '.*@(mosaicwellness[.]in)$'; }
+    function threshold() { return 2000000; }                          // ₹20,00,000
+
+    // ── Identity ────────────────────────────────────────────────────────────
+    function email() { return request.auth.token.email.lower(); }
+    function companyAccount() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && email().matches(companyDomain())
+        // Google marks verified emails; Microsoft sign-ins are restricted by tenant.
+        && (request.auth.token.email_verified == true
+            || request.auth.token.firebase.sign_in_provider == 'microsoft.com');
+    }
+    function userPath() { return /databases/$(database)/documents/users/$(email()); }
+    function isUser() { return companyAccount() && exists(userPath()) && get(userPath()).data.active == true; }
+    function hasRole(r) { return isUser() && get(userPath()).data.role == r; }
+
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function unchanged(keys) { return !changed().hasAny(keys); }
+
+    // ── Users & roles (admin-managed; document id = lower-case email) ──────
+    match /users/{userEmail} {
+      allow get: if companyAccount() && userEmail == email();   // see own profile even before approval
+      allow read: if isUser();
+      allow create, update: if hasRole('admin')
+        && userEmail == userEmail.lower()
+        && userEmail.matches(companyDomain())
+        && request.resource.data.keys().hasOnly(['name', 'role', 'active'])
+        && request.resource.data.role in ['maker', 'approver1', 'approver2', 'approver3', 'finance', 'admin']
+        && request.resource.data.active is bool
+        // admins cannot demote or disable themselves (avoids lock-out)
+        && (userEmail != email() || (request.resource.data.role == 'admin' && request.resource.data.active == true));
+      allow delete: if hasRole('admin') && userEmail != email();
+    }
+
+    // ── Invoices (written only by User 1 / makers) ──────────────────────────
+    function amountsOk(d) {
+      return d.taxableAmount is number && d.gstAmount is number && d.totalAmount is number
+        && d.taxableAmount >= 0 && d.gstAmount >= 0 && d.totalAmount > 0
+        && math.abs(d.taxableAmount + d.gstAmount - d.totalAmount) <= 1;
+    }
+    function batchPath(id) { return /databases/$(database)/documents/batches/$(id); }
+    // Editable unless it sits in a batch that is still in approval / paid.
+    function unlocked(inv) {
+      return inv.batchId == null || !exists(batchPath(inv.batchId)) || get(batchPath(inv.batchId)).data.status == 'REJECTED';
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if isUser();
+
+      allow create: if hasRole('maker')
+        && request.resource.data.createdBy == email()
+        && request.resource.data.status == 'DRAFT'
+        && request.resource.data.batchId == null
+        && request.resource.data.validatedBy == null
+        && amountsOk(request.resource.data);
+
+      // (a) edit or validate while not locked in an active batch
+      allow update: if hasRole('maker')
+        && unchanged(['createdBy', 'createdAt'])
+        && unlocked(resource.data)
+        && request.resource.data.batchId == null
+        && amountsOk(request.resource.data)
+        && (request.resource.data.status == 'DRAFT'
+            || (request.resource.data.status == 'VALIDATED' && request.resource.data.validatedBy == email()));
+
+      // (b) send for approval: attach a validated invoice to a batch. Only the
+      //     person who validated it may do so, and nothing else may change.
+      //     Deliberately needs no document lookups, so bulk sends stay within
+      //     the rules' 20-lookups-per-write limit.
+      allow update: if companyAccount()
+        && resource.data.status == 'VALIDATED'
+        && resource.data.batchId == null
+        && resource.data.validatedBy == email()
+        && request.resource.data.status == 'VALIDATED'
+        && request.resource.data.batchId is string
+        && changed().hasOnly(['batchId', 'updatedAt', 'history']);
+
+      allow delete: if hasRole('maker') && resource.data.batchId == null;
+    }
+
+    // ── Payment batches (one per expense category per send) ─────────────────
+    function lastApproval() { return request.resource.data.approvals[request.resource.data.approvals.size() - 1]; }
+
+    // Approver at `level` moves a batch out of `from` to `to` (approve) or REJECTED.
+    function decide(role, level, from, to) {
+      return hasRole(role)
+        && resource.data.status == from
+        && changed().hasOnly(['status', 'approvals', 'updatedAt'])
+        && request.resource.data.approvals.size() == resource.data.approvals.size() + 1
+        && request.resource.data.approvals[0:resource.data.approvals.size()] == resource.data.approvals
+        && lastApproval().by == email()
+        && lastApproval().level == level
+        && ((request.resource.data.status == to && lastApproval().decision == 'APPROVED')
+            || (request.resource.data.status == 'REJECTED' && lastApproval().decision == 'REJECTED'
+                && lastApproval().comment is string && lastApproval().comment.size() > 0));
+    }
+
+    match /batches/{batchId} {
+      allow read: if isUser();
+
+      allow create: if hasRole('maker')
+        && request.resource.data.createdBy == email()
+        && request.resource.data.status == 'PENDING_L1'
+        && request.resource.data.approvals.size() == 0
+        && request.resource.data.invoiceIds.size() > 0
+        && request.resource.data.invoiceIds.size() == request.resource.data.invoiceCount
+        && request.resource.data.totalAmount is number
+        && request.resource.data.totalAmount > 0
+        // the >₹20 lakh routing flag cannot be faked
+        && request.resource.data.requiresL3 == (request.resource.data.totalAmount > threshold())
+        && request.resource.data.paymentRef == null;
+
+      allow update: if decide('approver1', 1, 'PENDING_L1', 'PENDING_L2')
+        || decide('approver2', 2, 'PENDING_L2', resource.data.requiresL3 ? 'PENDING_L3' : 'WITH_FINANCE')
+        || decide('approver3', 3, 'PENDING_L3', 'WITH_FINANCE')
+        || (hasRole('finance')
+            && resource.data.status == 'WITH_FINANCE'
+            && request.resource.data.status == 'PAID'
+            && changed().hasOnly(['status', 'paymentRef', 'paidAt', 'paidBy', 'updatedAt'])
+            && request.resource.data.paidBy == email()
+            && request.resource.data.paymentRef is string
+            && request.resource.data.paymentRef.size() > 0);
+
+      allow delete: if false;   // full audit trail is kept
+    }
+
+    // ── Outgoing email (Firebase "Trigger Email" extension), optional ───────
+    match /mail/{id} {
+      allow create: if hasRole('approver2') || hasRole('approver3');
+      allow read, update, delete: if false;
+    }
+  }
+}

@@ -1,0 +1,96 @@
+import { describe, expect, it } from 'vitest';
+import type { Batch, Invoice } from '../types';
+import { validateInvoice, makeDupKey } from './validation';
+import { nextStatusOnApprove, planBatches, requiresL3, stageOf, verifyBatchTotal } from './workflow';
+import { buildPaymentWorkbook } from './excel';
+import * as XLSX from 'xlsx';
+
+const inv = (over: Partial<Invoice> = {}): Invoice => ({
+  id: Math.random().toString(36).slice(2),
+  vendorName: 'Acme Pvt Ltd', vendorGstin: '27ABCDE1234F1Z5', invoiceNumber: 'INV-1', invoiceDate: '2026-10-01',
+  taxableAmount: 100000, gstAmount: 18000, totalAmount: 118000, category: 'Rent', notes: '',
+  dupKey: '', filePath: 'x', fileName: 'x.pdf', status: 'VALIDATED', batchId: null,
+  createdBy: 'm@x.com', createdAt: '', updatedAt: '', validatedBy: 'm@x.com', validatedAt: '', history: [],
+  ...over,
+});
+
+describe('L3 routing threshold (₹20 lakh)', () => {
+  it('requires L3 only strictly above 20,00,000', () => {
+    expect(requiresL3(2_000_000)).toBe(false);
+    expect(requiresL3(2_000_000.01)).toBe(true);
+    expect(requiresL3(1_999_999)).toBe(false);
+  });
+
+  it('routes L2 approval to L3 or straight to finance', () => {
+    expect(nextStatusOnApprove({ status: 'PENDING_L1', requiresL3: false })).toBe('PENDING_L2');
+    expect(nextStatusOnApprove({ status: 'PENDING_L2', requiresL3: false })).toBe('WITH_FINANCE');
+    expect(nextStatusOnApprove({ status: 'PENDING_L2', requiresL3: true })).toBe('PENDING_L3');
+    expect(nextStatusOnApprove({ status: 'PENDING_L3', requiresL3: true })).toBe('WITH_FINANCE');
+    expect(() => nextStatusOnApprove({ status: 'PAID', requiresL3: true })).toThrow();
+  });
+});
+
+describe('planBatches', () => {
+  it('groups by expense category and decides routing on the batch total', () => {
+    const plan = planBatches([
+      inv({ category: 'Rent', totalAmount: 1_500_000, taxableAmount: 1_271_186.44, gstAmount: 228_813.56 }),
+      inv({ category: 'Rent', totalAmount: 600_000, taxableAmount: 508_474.58, gstAmount: 91_525.42 }),
+      inv({ category: 'Travel', totalAmount: 50_000, taxableAmount: 47_619.05, gstAmount: 2_380.95 }),
+    ]);
+    expect(plan.map((p) => p.category)).toEqual(['Rent', 'Travel']);
+    expect(plan[0].totalAmount).toBe(2_100_000);
+    expect(plan[0].requiresL3).toBe(true); // individual invoices < 20L, batch > 20L
+    expect(plan[1].requiresL3).toBe(false);
+  });
+});
+
+describe('stageOf / verifyBatchTotal', () => {
+  const b = (over: Partial<Batch>): Batch => ({
+    id: 'b1', batchNo: 'B', category: 'Rent', invoiceIds: [], invoiceCount: 0, taxableTotal: 0, gstTotal: 0, totalAmount: 0,
+    requiresL3: false, status: 'PENDING_L1', approvals: [], createdBy: '', createdAt: '', updatedAt: '', paymentRef: null, paidAt: null, paidBy: null,
+    ...over,
+  });
+  it('shows a rejected batch as Returned on its invoices', () => {
+    const i = inv({ batchId: 'b1' });
+    expect(stageOf(i, new Map([['b1', b({ status: 'REJECTED' })]]))).toBe('RETURNED');
+    expect(stageOf(i, new Map([['b1', b({ status: 'PENDING_L2' })]]))).toBe('PENDING_L2');
+    expect(stageOf(inv(), new Map())).toBe('VALIDATED');
+  });
+  it('detects a tampered batch total', () => {
+    const i = inv({ id: 'i1', batchId: 'b1' });
+    expect(verifyBatchTotal(b({ invoiceIds: ['i1'], totalAmount: 118000 }), [i]).ok).toBe(true);
+    expect(verifyBatchTotal(b({ invoiceIds: ['i1'], totalAmount: 1000 }), [i]).ok).toBe(false);
+    expect(verifyBatchTotal(b({ invoiceIds: ['i1', 'i2'], totalAmount: 118000 }), [i]).ok).toBe(false);
+  });
+  it('builds the finance Excel with summary and invoice sheets', () => {
+    const i = inv({ id: 'i1', batchId: 'b1' });
+    const wb = buildPaymentWorkbook([b({ invoiceIds: ['i1'], invoiceCount: 1, totalAmount: 118000 })], new Map([['i1', i]]));
+    expect(wb.SheetNames).toEqual(['Batch Summary', 'Invoice Details']);
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets['Invoice Details']);
+    expect(rows[0]['Invoice No']).toBe('INV-1');
+    expect(rows[0]['Total Amount']).toBe(118000);
+  });
+});
+
+describe('validateInvoice', () => {
+  const base = { ...inv(), hasAttachment: true };
+  it('passes a correct invoice', () => {
+    expect(validateInvoice(base, []).errors).toEqual([]);
+  });
+  it('rejects totals that do not add up, beyond ₹1 round-off', () => {
+    expect(validateInvoice({ ...base, totalAmount: 118500 }, []).errors.join()).toMatch(/does not match/);
+    const r = validateInvoice({ ...base, totalAmount: 118000.5 }, []);
+    expect(r.errors).toEqual([]);
+    expect(r.warnings.join()).toMatch(/Round-off/);
+  });
+  it('flags non-standard GST rates, bad GSTIN, duplicates and missing copy', () => {
+    expect(validateInvoice({ ...base, gstAmount: 15000, totalAmount: 115000 }, []).warnings.join()).toMatch(/not a standard slab/);
+    expect(validateInvoice({ ...base, vendorGstin: 'BAD' }, []).errors.join()).toMatch(/GSTIN/);
+    const other = { id: 'other', dupKey: makeDupKey(' ACME  pvt ltd', 'inv-1 '), invoiceNumber: 'INV-1' };
+    expect(validateInvoice(base, [other]).errors.join()).toMatch(/Duplicate/);
+    expect(validateInvoice({ ...base, hasAttachment: false }, []).errors.join()).toMatch(/Attach/);
+  });
+  it('rejects future dates', () => {
+    expect(validateInvoice({ ...base, invoiceDate: '2999-01-01' }, []).errors.join()).toMatch(/future/);
+  });
+});
