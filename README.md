@@ -109,7 +109,7 @@ Sign in to the site as the admin and add people under **Users & roles**. The rol
 * The Google Sheet is a **copy** of the workflow data that's rewritten after each action. If one update fails, for example because someone lacks edit access, the next successful update fixes it. **Retry** in the top bar forces an update.
 * The Firestore rules can't add up the invoices inside a batch. Each approver's screen re-adds the invoice amounts and blocks approval if they don't match the batch total. This catches a tampered total, but the check runs in the browser. For full server-side enforcement, move batch creation into a Cloud Function.
 * Deleting a draft invoice leaves its copy in Drive. Uploading a replacement copy keeps the old file too.
-* The rules and the Drive/Sheets integration haven't been tested against a live project yet. Run one dummy invoice through every user before going live.
+* The Drive/Sheets integration has only been tested on the live project by hand. The Firestore rules are covered by `npm run test:rules`.
 
 ## Project structure
 
@@ -134,3 +134,12 @@ npm test
 ```bash
 npm run build
 ```
+
+### Testing the security rules
+`rules-tests/rules.test.ts` runs the app's real workflow actions (upload, send, approve, return, reject, pay, add vendor) against `firestore.rules` in the Firestore emulator. It also covers a 100-invoice batch. It needs Java 11 or newer. **Run it after every change to `firestore.rules`**: Firestore caps each rule check at 1000 evaluated expressions, and only a real run shows whether a rule stays under that cap.
+
+```bash
+npm run test:rules
+```
+
+On Windows, if the emulator fails with "Unable to establish loopback connection", run `sh rules-tests/run.sh` instead. It applies a Java setting that works around this. Set `JDK_DIR` to your JDK folder first.

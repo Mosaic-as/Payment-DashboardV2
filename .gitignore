@@ -6,3 +6,5 @@ dist
 .claude/
 *.tsbuildinfo
 *.local
+.uds/
+firestore-debug.log

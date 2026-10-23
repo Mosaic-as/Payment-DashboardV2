@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { approveBatch, rejectBatch, returnInvoices } from '../data/actions';
+import { useRef, useState } from 'react';
+import { approveBatch, approveSelected, rejectBatch, returnInvoices } from '../data/actions';
 import { useStore } from '../data/store';
 import { config } from '../config';
 import { formatDateTime, formatINR, formatLakh } from '../lib/format';
@@ -10,7 +10,7 @@ import { Empty, ErrorNote, StageBadge, useAction } from '../components/ui';
 
 function DecisionPanel({ batch, selected, clearSelection, onDone }: {
   batch: Batch;
-  /** Invoices ticked in the batch table, to be returned individually. */
+  /** Invoices ticked in the batch table. */
   selected: string[];
   clearSelection: () => void;
   onDone: () => void;
@@ -18,9 +18,19 @@ function DecisionPanel({ batch, selected, clearSelection, onDone }: {
   const { be, me, invoicesById } = useStore();
   const [comment, setComment] = useState('');
   const [mode, setMode] = useState<'idle' | 'reject'>('idle');
-  const { busy, error, run } = useAction();
+  const { busy, error, setError, run } = useAction();
+  const inputRef = useRef<HTMLInputElement>(null);
   const ok = verifyBatchTotal(batch, [...invoicesById.values()]).ok;
   const next = STAGE_LABELS[nextStatusOnApprove(batch)];
+  const alreadyApproved = (batch.levelApproved ?? []).length;
+
+  // Buttons stay clickable; a missing reason is explained instead of silently disabling them.
+  function needReason(what: string) {
+    if (comment.trim()) return false;
+    setError(`Type the reason for ${what} first — User 1 will see it.`);
+    inputRef.current?.focus();
+    return true;
+  }
 
   if (selected.length) {
     const amount = selected.reduce((s, id) => s + (invoicesById.get(id)?.totalAmount ?? 0), 0);
@@ -28,29 +38,40 @@ function DecisionPanel({ batch, selected, clearSelection, onDone }: {
     return (
       <div className="decision">
         <ErrorNote error={error} />
-        <span className="small"><b>{selected.length}</b> invoice(s) ticked · {formatINR(amount)}</span>
+        <span className="small"><b>{selected.length}</b> ticked · {formatINR(amount)}</span>
         <input
+          ref={inputRef}
           className="decision-input"
-          placeholder="Reason for returning (required) — shown to User 1"
+          placeholder="Comment — required when returning (User 1 sees it)"
           value={comment}
-          onChange={(e) => setComment(e.target.value)}
+          onChange={(e) => { setComment(e.target.value); setError(''); }}
         />
         <button className="btn btn-ghost" onClick={clearSelection}>Clear</button>
-        {all ? (
-          <span className="small warn-text">All invoices ticked — use Reject for the whole batch.</span>
-        ) : (
+        {!all && (
           <button
             className="btn btn-danger"
-            disabled={busy || !comment.trim()}
-            onClick={() => run(async () => {
+            disabled={busy}
+            onClick={() => !needReason('returning') && run(async () => {
               await returnInvoices(be, me.email, batch, selected, comment, invoicesById);
               setComment('');
               clearSelection();
             })}
           >
-            {busy ? 'Returning…' : `Return ${selected.length} to User 1`}
+            {`Return ${selected.length} to User 1`}
           </button>
         )}
+        <button
+          className="btn btn-success"
+          disabled={busy || !ok}
+          onClick={() => run(async () => {
+            const moved = await approveSelected(be, me.email, batch, selected, comment, invoicesById);
+            setComment('');
+            clearSelection();
+            if (moved) onDone();
+          })}
+        >
+          {busy ? 'Saving…' : `Approve ${selected.length}`}
+        </button>
       </div>
     );
   }
@@ -59,28 +80,29 @@ function DecisionPanel({ batch, selected, clearSelection, onDone }: {
     <div className="decision">
       <ErrorNote error={error} />
       <input
+        ref={inputRef}
         className="decision-input"
         placeholder={mode === 'reject' ? 'Reason for rejecting the whole batch (required) — sent back to User 1' : 'Comment (optional)'}
         value={comment}
-        onChange={(e) => setComment(e.target.value)}
+        onChange={(e) => { setComment(e.target.value); setError(''); }}
       />
       {mode === 'reject' ? (
         <>
           <button className="btn btn-ghost" onClick={() => setMode('idle')}>Back</button>
-          <button className="btn btn-danger" disabled={busy || !comment.trim()} onClick={() => run(async () => { await rejectBatch(be, me.email, batch, comment); onDone(); })}>
+          <button className="btn btn-danger" disabled={busy} onClick={() => !needReason('rejecting') && run(async () => { await rejectBatch(be, me.email, batch, comment); onDone(); })}>
             Confirm reject batch
           </button>
         </>
       ) : (
         <>
-          <button className="btn btn-outline danger" onClick={() => setMode('reject')}>Reject batch…</button>
+          <button className="btn btn-outline danger" onClick={() => { setMode('reject'); inputRef.current?.focus(); }}>Reject batch…</button>
           <button
             className="btn btn-success"
             disabled={busy || !ok}
             title={`Moves the batch to: ${next}`}
             onClick={() => run(async () => { await approveBatch(be, me.email, batch, comment, invoicesById); onDone(); })}
           >
-            {busy ? 'Approving…' : `Approve → ${next}`}
+            {busy ? 'Approving…' : alreadyApproved ? `Approve remaining ${batch.invoiceIds.length - alreadyApproved} → ${next}` : `Approve all → ${next}`}
           </button>
         </>
       )}

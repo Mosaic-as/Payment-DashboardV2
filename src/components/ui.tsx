@@ -56,7 +56,11 @@ export function useAction() {
     } catch (e) {
       console.error(e);
       const msg = (e as Error).message || String(e);
-      setError(msg.includes('permission') ? 'You do not have permission to do this (blocked by security rules).' : msg);
+      // Keep Firebase's error code visible: it tells rules problems from connection problems.
+      const code = (e as { code?: string }).code;
+      setError(code === 'permission-denied'
+        ? `Blocked by the database security rules (permission-denied). Make sure the latest rules are published. Details: ${msg}`
+        : code ? `${msg} [${code}]` : msg);
       return undefined;
     } finally {
       setBusy(false);

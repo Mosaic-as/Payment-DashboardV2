@@ -101,56 +101,82 @@ service cloud.firestore {
     }
 
     // ── Payment batches (one per expense category per send) ─────────────────
-    function lastApproval() { return request.resource.data.approvals[request.resource.data.approvals.size() - 1]; }
+    // Written so every check stays cheap and error-free whichever branch
+    // applies: Firestore caps a rule at 1000 evaluated expressions and does not
+    // reliably skip branches that don't apply. Verified with npm run test:rules.
 
-    // Approver at `level` moves a batch out of `from` to `to` (approve) or REJECTED.
-    function decide(level, from, to) {
-      return resource.data.status == from
-        && changed().hasOnly(['status', 'approvals', 'updatedAt'])
-        && request.resource.data.approvals.size() == resource.data.approvals.size() + 1
-        && request.resource.data.approvals[0:resource.data.approvals.size()] == resource.data.approvals
-        && lastApproval().by == email()
-        && lastApproval().level == level
-        && ((request.resource.data.status == to && lastApproval().decision == 'APPROVED')
-            || (request.resource.data.status == 'REJECTED' && lastApproval().decision == 'REJECTED'
-                && lastApproval().comment is string && lastApproval().comment.size() > 0));
+    // Entry n of a list, or an empty entry when the list is shorter.
+    function entry(list, n) {
+      return n >= 0 && list.size() > n ? list[n] : { 'by': '', 'level': 0, 'decision': '', 'comment': '', 'reason': '' };
     }
 
-    // Approver at the batch's current level takes some invoices out and sends
-    // them back to User 1. The batch keeps its level; totals and the >20 lakh
-    // routing must match what is left.
-    function returnSome(level, at) {
-      return resource.data.status == at
-        && request.resource.data.status == at
-        && changed().hasOnly(['invoiceIds', 'invoiceCount', 'taxableTotal', 'gstTotal', 'totalAmount', 'requiresL3', 'returned', 'updatedAt'])
+    // Approver at `level` moves the batch on to `next` (approve) or REJECTED.
+    function decide(keys, level, next) {
+      let n = resource.data.approvals.size();
+      let last = entry(request.resource.data.approvals, n);
+      return keys.hasOnly(['status', 'approvals', 'levelApproved', 'updatedAt'])
+        && request.resource.data.get('levelApproved', []).size() == 0
+        && request.resource.data.approvals.size() == n + 1
+        && request.resource.data.approvals.hasAll(resource.data.approvals)
+        && last.by == email()
+        && last.level == level
+        && ((request.resource.data.status == next && last.decision == 'APPROVED')
+            || (request.resource.data.status == 'REJECTED' && last.decision == 'REJECTED' && last.comment.size() > 0));
+    }
+
+    // Approver takes some invoices out and returns them to User 1. The batch
+    // keeps its level; totals and the >20 lakh routing must match what is left.
+    function returnSome(keys, level) {
+      let before = resource.data.get('returned', []);
+      let after = request.resource.data.get('returned', []);
+      let last = entry(after, after.size() - 1);
+      return keys.hasOnly(['invoiceIds', 'invoiceCount', 'taxableTotal', 'gstTotal', 'totalAmount', 'requiresL3', 'returned', 'levelApproved', 'updatedAt'])
+        && request.resource.data.status == resource.data.status
         && request.resource.data.invoiceIds.size() > 0
         && request.resource.data.invoiceIds.size() < resource.data.invoiceIds.size()
         && resource.data.invoiceIds.hasAll(request.resource.data.invoiceIds)
+        && request.resource.data.invoiceIds.hasAll(request.resource.data.get('levelApproved', []))
         && request.resource.data.invoiceCount == request.resource.data.invoiceIds.size()
         && request.resource.data.totalAmount is number
         && request.resource.data.totalAmount > 0
         && request.resource.data.totalAmount < resource.data.totalAmount
         && request.resource.data.requiresL3 == (request.resource.data.totalAmount > threshold())
-        && request.resource.data.returned.size() > resource.data.get('returned', []).size()
-        && request.resource.data.returned[request.resource.data.returned.size() - 1].by == email()
-        && request.resource.data.returned[request.resource.data.returned.size() - 1].level == level
-        && request.resource.data.returned[request.resource.data.returned.size() - 1].reason.size() > 0;
+        && after.size() > before.size()
+        && last.by == email()
+        && last.level == level
+        && last.reason.size() > 0;
     }
 
-    function markPaid() {
+    // Approver approves some invoices one by one; the batch stays at this level
+    // until all are approved (the last approval goes through decide()).
+    function approveSome(keys) {
+      let before = resource.data.get('levelApproved', []);
+      let after = request.resource.data.get('levelApproved', []);
+      return keys.hasOnly(['levelApproved', 'updatedAt'])
+        && after.size() > before.size()
+        && after.size() < resource.data.invoiceIds.size()
+        && after.hasAll(before)
+        && resource.data.invoiceIds.hasAll(after);
+    }
+
+    function markPaid(keys) {
       return resource.data.status == 'WITH_FINANCE'
         && request.resource.data.status == 'PAID'
-        && changed().hasOnly(['status', 'paymentRef', 'paidAt', 'paidBy', 'updatedAt'])
+        && keys.hasOnly(['status', 'paymentRef', 'paidAt', 'paidBy', 'updatedAt'])
         && request.resource.data.paidBy == email()
         && request.resource.data.paymentRef is string
         && request.resource.data.paymentRef.size() > 0;
     }
 
-    function batchUpdate(role) {
-      return (role == 'approver1' && (decide(1, 'PENDING_L1', 'PENDING_L2') || returnSome(1, 'PENDING_L1')))
-        || (role == 'approver2' && (decide(2, 'PENDING_L2', resource.data.requiresL3 ? 'PENDING_L3' : 'WITH_FINANCE') || returnSome(2, 'PENDING_L2')))
-        || (role == 'approver3' && (decide(3, 'PENDING_L3', 'WITH_FINANCE') || returnSome(3, 'PENDING_L3')))
-        || (role == 'finance' && markPaid());
+    function batchUpdate() {
+      let role = get(userPath()).data.role;
+      let keys = request.resource.data.diff(resource.data).affectedKeys();
+      let level = role == 'approver1' ? 1 : (role == 'approver2' ? 2 : (role == 'approver3' ? 3 : 0));
+      let at = level == 1 ? 'PENDING_L1' : (level == 2 ? 'PENDING_L2' : (level == 3 ? 'PENDING_L3' : 'none'));
+      let next = level == 1 ? 'PENDING_L2' : (level == 2 && resource.data.requiresL3 ? 'PENDING_L3' : 'WITH_FINANCE');
+      return (level > 0 && resource.data.status == at
+               && (decide(keys, level, next) || returnSome(keys, level) || approveSome(keys)))
+        || (role == 'finance' && markPaid(keys));
     }
 
     match /batches/{batchId} {
@@ -170,7 +196,7 @@ service cloud.firestore {
 
       // The user's role is read once here: each rule check may look up at
       // most 10 documents, so the role must not be re-read per branch.
-      allow update: if isUser() && batchUpdate(get(userPath()).data.role);
+      allow update: if isUser() && batchUpdate();
 
       allow delete: if false;   // full audit trail is kept
     }

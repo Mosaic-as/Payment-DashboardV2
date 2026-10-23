@@ -157,11 +157,30 @@ export async function approveBatch(be: Backend, by: string, batch: Batch, commen
   };
   const ops: WriteOp[] = [{
     type: 'update', col: 'batches', id: batch.id,
-    data: { status: updated.status, approvals: updated.approvals, updatedAt: now },
+    data: {
+      status: updated.status, approvals: updated.approvals, updatedAt: now,
+      // The next level starts with nothing approved yet.
+      ...(batch.levelApproved?.length ? { levelApproved: [] } : {}),
+    },
   }];
   if (updated.status === 'WITH_FINANCE' && config.financeEmail) ops.push(financeMail(updated, invoicesById));
   await be.commit(ops);
   return updated;
+}
+
+/**
+ * Approves only the ticked invoices at this level. When every invoice left in
+ * the batch has been approved, the batch moves on to the next level.
+ */
+export async function approveSelected(be: Backend, by: string, batch: Batch, invoiceIds: string[], comment: string, invoicesById: Map<string, Invoice>) {
+  if (!LEVEL_OF[batch.status]) throw new Error('This batch is not awaiting approval.');
+  const approved = new Set([...(batch.levelApproved ?? []), ...invoiceIds].filter((id) => batch.invoiceIds.includes(id)));
+  if (approved.size === batch.invoiceIds.length) return approveBatch(be, by, batch, comment, invoicesById);
+  await be.commit([{
+    type: 'update', col: 'batches', id: batch.id,
+    data: { levelApproved: batch.invoiceIds.filter((id) => approved.has(id)), updatedAt: nowIso() },
+  }]);
+  return null;
 }
 
 export async function rejectBatch(be: Backend, by: string, batch: Batch, reason: string) {
@@ -211,9 +230,19 @@ export async function returnInvoices(be: Backend, by: string, batch: Batch, invo
       totalAmount,
       requiresL3: requiresL3(totalAmount),
       returned: [...(batch.returned ?? []), ...returned],
+      ...(batch.levelApproved ? { levelApproved: batch.levelApproved.filter((id) => !ids.has(id)) } : {}),
       updatedAt: now,
     },
   }]);
+  // If everything left had already been approved one by one, move the batch on.
+  const approvedLeft = (batch.levelApproved ?? []).filter((id) => !ids.has(id));
+  if (approvedLeft.length && approvedLeft.length === remaining.length) {
+    const after: Batch = {
+      ...batch, invoiceIds: remaining, invoiceCount: remaining.length, totalAmount,
+      requiresL3: requiresL3(totalAmount), levelApproved: approvedLeft,
+    };
+    await approveBatch(be, by, after, '', invoicesById);
+  }
 }
 
 export async function markPaid(be: Backend, by: string, batch: Batch, paymentRef: string) {

@@ -105,6 +105,8 @@ export interface Batch {
   approvals: Approval[];
   /** Invoices returned individually; they are no longer in invoiceIds. */
   returned?: ReturnedInvoice[];
+  /** Invoices already approved one by one at the current level. */
+  levelApproved?: string[];
   createdBy: string;
   createdAt: string;
   updatedAt: string;

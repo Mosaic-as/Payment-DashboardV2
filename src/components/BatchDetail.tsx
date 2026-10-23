@@ -56,8 +56,10 @@ function Timeline({ batch }: { batch: Batch }) {
   );
 }
 
-export function BatchInvoicesTable({ invoices, selected, onToggle }: {
+export function BatchInvoicesTable({ invoices, selected, onToggle, approved }: {
   invoices: Invoice[];
+  /** Invoices already approved one by one at the current level. */
+  approved?: Set<string>;
   /** When given, rows get tick boxes (approver returning single invoices). */
   selected?: Set<string>;
   onToggle?: (id: string) => void;
@@ -89,7 +91,10 @@ export function BatchInvoicesTable({ invoices, selected, onToggle }: {
               <td className="num">{formatAmount(i.taxableAmount)}</td>
               <td className="num">{formatAmount(i.gstAmount)}</td>
               <td className="num"><b>{formatAmount(i.totalAmount)}</b></td>
-              <td><AttachmentLink inv={i} /></td>
+              <td>
+                <AttachmentLink inv={i} />
+                {approved?.has(i.id) && <span className="badge badge-paid tick-approved">✓ Approved</span>}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -175,9 +180,16 @@ export function BatchDetail({ batch, onClose, actions }: {
       )}
       <Timeline batch={batch} />
       {selectable && invoices.length > 1 && (
-        <p className="muted small">Tick any invoice that has a problem to return just that invoice to User 1; the rest of the batch continues.</p>
+        <p className="muted small">
+          Tick invoices to approve or return them one by one. The batch moves to the next level once every invoice left in it is approved.
+        </p>
       )}
-      <BatchInvoicesTable invoices={invoices} selected={selectable ? selected : undefined} onToggle={selectable ? toggle : undefined} />
+      <BatchInvoicesTable
+        invoices={invoices}
+        selected={selectable ? selected : undefined}
+        onToggle={selectable ? toggle : undefined}
+        approved={new Set(batch.levelApproved ?? [])}
+      />
       <ReturnedList batch={batch} />
     </Modal>
   );

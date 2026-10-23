@@ -107,7 +107,19 @@ export function createFirebaseBackend(): Backend {
         else if (op.type === 'update') batch.update(r, op.data as DocumentData);
         else batch.delete(r);
       }
-      await batch.commit();
+      // Firestore waits indefinitely when the server can't be reached; say so instead.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(
+          new Error('The server did not confirm the save within 30 seconds. Check the internet connection (a firewall may be blocking firestore.googleapis.com), then reload and check whether it went through.'),
+          { code: 'timeout' },
+        )), 30_000);
+      });
+      try {
+        await Promise.race([batch.commit(), timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
     },
 
     async uploadFile(_invoiceId, file, meta) {
