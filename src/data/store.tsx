@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AppUser, Batch, Invoice, SessionUser } from '../types';
+import type { AppUser, Batch, Invoice, SessionUser, Vendor } from '../types';
+import { DEFAULT_VENDORS, vendorKey } from '../vendors';
 import type { Backend } from './backend';
 
 export type SheetSync = { state: 'off' | 'idle' | 'syncing' | 'ok' | 'error'; message?: string; at?: string };
@@ -10,6 +11,8 @@ interface Store {
   invoices: Invoice[];
   batches: Batch[];
   users: AppUser[];
+  /** Built-in + user-added vendors, sorted by name. */
+  vendors: Vendor[];
   invoicesById: Map<string, Invoice>;
   batchesById: Map<string, Batch>;
   nameOf: (email: string | null | undefined) => string;
@@ -24,13 +27,17 @@ export function StoreProvider({ be: rawBe, me, children }: { be: Backend; me: St
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [batches, setBatches] = useState<Batch[] | null>(null);
   const [users, setUsers] = useState<AppUser[]>([]);
+  const [customVendors, setCustomVendors] = useState<{ id: string; name: string; gstin: string }[]>([]);
   const [sheet, setSheet] = useState<SheetSync>({ state: rawBe.syncSheet ? 'idle' : 'off' });
   const latest = useRef({ invoices: [] as Invoice[], batches: [] as Batch[] });
   latest.current = { invoices: invoices ?? [], batches: batches ?? [] };
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
-    const subs = [rawBe.subscribeInvoices(setInvoices), rawBe.subscribeBatches(setBatches), rawBe.subscribeUsers(setUsers)];
+    const subs = [
+      rawBe.subscribeInvoices(setInvoices), rawBe.subscribeBatches(setBatches),
+      rawBe.subscribeUsers(setUsers), rawBe.subscribeVendors(setCustomVendors),
+    ];
     return () => subs.forEach((u) => u());
   }, [rawBe]);
 
@@ -62,6 +69,17 @@ export function StoreProvider({ be: rawBe, me, children }: { be: Backend; me: St
     },
   }), [rawBe, syncSheetNow]);
 
+  const vendors = useMemo<Vendor[]>(() => {
+    const byKey = new Map<string, Vendor>();
+    DEFAULT_VENDORS.forEach((name) => byKey.set(vendorKey(name), { id: vendorKey(name), name, gstin: '', custom: false }));
+    // A user-added entry for a built-in name only contributes its GSTIN.
+    customVendors.forEach((v) => {
+      const prev = byKey.get(v.id);
+      byKey.set(v.id, prev ? { ...prev, gstin: v.gstin || prev.gstin } : { id: v.id, name: v.name, gstin: v.gstin ?? '', custom: true });
+    });
+    return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+  }, [customVendors]);
+
   const value = useMemo<Store>(() => {
     const inv = invoices ?? [];
     const bat = [...(batches ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -72,6 +90,7 @@ export function StoreProvider({ be: rawBe, me, children }: { be: Backend; me: St
       invoices: [...inv].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       batches: bat,
       users,
+      vendors,
       invoicesById: new Map(inv.map((i) => [i.id, i])),
       batchesById: new Map(bat.map((b) => [b.id, b])),
       nameOf: (email) => (email ? names.get(email) ?? email : ''),
@@ -79,7 +98,7 @@ export function StoreProvider({ be: rawBe, me, children }: { be: Backend; me: St
       sheet,
       syncSheetNow: () => syncSheetNow(0),
     };
-  }, [be, me, invoices, batches, users, sheet, syncSheetNow]);
+  }, [be, me, invoices, batches, users, vendors, sheet, syncSheetNow]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

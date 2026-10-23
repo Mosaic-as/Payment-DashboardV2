@@ -79,7 +79,8 @@ export function planBatches(invoices: Invoice[]): PlannedBatch[] {
 export function makeBatchNo(category: string, date = new Date()): string {
   const ymd = `${date.getFullYear() % 100}`.padStart(2, '0') +
     `${date.getMonth() + 1}`.padStart(2, '0') + `${date.getDate()}`.padStart(2, '0');
-  const cat = category.replace(/[^A-Za-z]/g, '').slice(0, 4).toUpperCase() || 'GEN';
+  // 'Warehouse - Electricity' → 'ELEC': use the part after the last dash.
+  const cat = category.split('-').pop()!.replace(/[^A-Za-z]/g, '').slice(0, 4).toUpperCase() || 'GEN';
   const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
   return `B${ymd}-${cat}-${rand}`;
 }

@@ -95,6 +95,7 @@ export function createFirebaseBackend(): Backend {
 
     subscribeInvoices: (cb) => listen<Invoice>('invoices', cb),
     subscribeBatches: (cb) => listen<Batch>('batches', cb),
+    subscribeVendors: (cb) => listen<{ id: string; name: string; gstin: string }>('vendors', cb),
     subscribeUsers: (cb) => listen<AppUser>('users', (rows) => cb(rows.map((r) => ({ ...r, email: (r as AppUser & { id: string }).id })))),
 
     async commit(ops) {

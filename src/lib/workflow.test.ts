@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { Batch, Invoice } from '../types';
 import { validateInvoice, makeDupKey } from './validation';
-import { nextStatusOnApprove, planBatches, requiresL3, stageOf, verifyBatchTotal } from './workflow';
+import { makeBatchNo, nextStatusOnApprove, planBatches, requiresL3, stageOf, verifyBatchTotal } from './workflow';
 import { allInvoiceRows, buildPaymentWorkbook, toTable } from './excel';
 import { driveFileName, monthFolderName } from './format';
 import * as XLSX from 'xlsx';
+import { DEFAULT_VENDORS, vendorKey } from '../vendors';
 
 const inv = (over: Partial<Invoice> = {}): Invoice => ({
   id: Math.random().toString(36).slice(2),
   vendorName: 'Acme Pvt Ltd', vendorGstin: '27ABCDE1234F1Z5', invoiceNumber: 'INV-1', invoiceDate: '2026-10-01',
-  taxableAmount: 100000, gstAmount: 18000, totalAmount: 118000, category: 'Rent', serviceMonth: '2026-09', notes: '',
+  taxableAmount: 100000, gstAmount: 18000, totalAmount: 118000, category: 'Warehouse - Rent', serviceMonth: '2026-09', notes: '',
   dupKey: '', filePath: 'x', fileName: 'x.pdf', fileUrl: 'https://drive.google.com/file/d/x/view', status: 'VALIDATED', batchId: null,
   createdBy: 'm@x.com', createdAt: '', updatedAt: '', validatedBy: 'm@x.com', validatedAt: '', history: [],
   ...over,
@@ -117,5 +118,16 @@ describe('Google Drive and Sheet layout', () => {
     expect(row.Status).toBe('Draft');
     expect(String(row['Service Month'])).toMatch(/^Sep\w* 2026$/);
     expect(row['Invoice Copy']).toBe('https://drive.google.com/file/d/x/view');
+  });
+});
+
+describe('categories and vendors', () => {
+  it('builds batch numbers from the part after "Warehouse -"', () => {
+    expect(makeBatchNo('Warehouse - Electricity', new Date(2026, 9, 24))).toMatch(/^B261024-ELEC-[A-Z0-9]{4}$/);
+    expect(makeBatchNo('Warehouse - Loading/Unloading', new Date(2026, 9, 24))).toMatch(/^B261024-LOAD-/);
+  });
+  it('treats differently written vendor names as the same vendor', () => {
+    expect(vendorKey('M/S Liberal')).toBe(vendorKey('m/s  liberal.'));
+    expect(new Set(DEFAULT_VENDORS.map(vendorKey)).size).toBe(DEFAULT_VENDORS.length);
   });
 });

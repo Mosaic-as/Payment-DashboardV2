@@ -22,6 +22,14 @@ export interface SessionUser {
   profile: AppUser | null; // null = signed in but not provisioned by an admin
 }
 
+export interface Vendor {
+  id: string; // vendorKey(name)
+  name: string;
+  gstin: string;
+  /** false for the built-in starting list */
+  custom: boolean;
+}
+
 export interface HistoryEntry {
   at: string;
   by: string;
@@ -108,7 +116,7 @@ export const STAGE_LABELS: Record<InvoiceStage, string> = {
 
 export interface WriteOp {
   type: 'set' | 'update' | 'delete';
-  col: 'invoices' | 'batches' | 'users' | 'mail';
+  col: 'invoices' | 'batches' | 'users' | 'mail' | 'vendors';
   id: string;
   data?: Record<string, unknown>;
 }

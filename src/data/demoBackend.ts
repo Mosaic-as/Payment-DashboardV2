@@ -10,7 +10,7 @@ const KEY = 'ipa-demo-db-v3';
 const SESSION_KEY = 'ipa-demo-session';
 const FILE_PREFIX = 'ipa-demo-file:';
 
-type Db = { invoices: Record<string, unknown>; batches: Record<string, unknown>; users: Record<string, unknown>; mail: Record<string, unknown> };
+type Db = { invoices: Record<string, unknown>; batches: Record<string, unknown>; users: Record<string, unknown>; mail: Record<string, unknown>; vendors: Record<string, unknown> };
 
 export const DEMO_USERS: AppUser[] = [
   { email: 'maker@mosaicwellness.in', name: 'Riya (User 1)', role: 'maker', active: true },
@@ -30,15 +30,15 @@ function safeSet(key: string, value: string) {
 
 function load(): Db {
   const raw = safeGet(KEY);
-  if (raw) return JSON.parse(raw);
-  const db: Db = { invoices: {}, batches: {}, users: {}, mail: {} };
+  if (raw) return { vendors: {}, ...JSON.parse(raw) };
+  const db: Db = { invoices: {}, batches: {}, users: {}, mail: {}, vendors: {} };
   for (const u of DEMO_USERS) db.users[u.email] = u;
   return db;
 }
 
 export function createDemoBackend(): Backend {
   let db = load();
-  const listeners = { invoices: new Set<() => void>(), batches: new Set<() => void>(), users: new Set<() => void>(), auth: new Set<() => void>() };
+  const listeners = { invoices: new Set<() => void>(), batches: new Set<() => void>(), users: new Set<() => void>(), vendors: new Set<() => void>(), auth: new Set<() => void>() };
   const save = () => safeSet(KEY, JSON.stringify(db));
   const emit = (k: keyof typeof listeners) => listeners[k].forEach((f) => f());
 
@@ -49,7 +49,7 @@ export function createDemoBackend(): Backend {
     return { email, name: p?.name ?? email, profile: p ?? null };
   }
 
-  function sub<T>(k: 'invoices' | 'batches' | 'users', cb: (rows: T[]) => void) {
+  function sub<T>(k: 'invoices' | 'batches' | 'users' | 'vendors', cb: (rows: T[]) => void) {
     const fire = () => cb(Object.entries(db[k]).map(([id, v]) => ({ ...(v as T), ...(k === 'users' ? { email: id } : { id }) })));
     listeners[k].add(fire);
     fire();
@@ -58,7 +58,7 @@ export function createDemoBackend(): Backend {
 
   // Keep multiple tabs in sync so roles can be tried side by side.
   window.addEventListener('storage', (e) => {
-    if (e.key === KEY) { db = load(); emit('invoices'); emit('batches'); emit('users'); }
+    if (e.key === KEY) { db = load(); emit('invoices'); emit('batches'); emit('users'); emit('vendors'); }
     if (e.key === SESSION_KEY) emit('auth');
   });
 
@@ -82,6 +82,7 @@ export function createDemoBackend(): Backend {
     subscribeInvoices: (cb) => sub<Invoice>('invoices', cb),
     subscribeBatches: (cb) => sub<Batch>('batches', cb),
     subscribeUsers: (cb) => sub<AppUser>('users', cb),
+    subscribeVendors: (cb) => sub<{ id: string; name: string; gstin: string }>('vendors', cb),
     async commit(ops: WriteOp[]) {
       const next: Db = JSON.parse(JSON.stringify(db));
       for (const op of ops) {
@@ -94,7 +95,7 @@ export function createDemoBackend(): Backend {
       }
       db = next;
       save();
-      emit('invoices'); emit('batches'); emit('users');
+      emit('invoices'); emit('batches'); emit('users'); emit('vendors');
     },
     async uploadFile(invoiceId, file, meta) {
       const path = `invoices/${invoiceId}/${Date.now()}_${meta.name}`;

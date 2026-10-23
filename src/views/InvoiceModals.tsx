@@ -8,6 +8,8 @@ import { validateInvoice } from '../lib/validation';
 import { planBatches, routeLabel } from '../lib/workflow';
 import type { Batch, Invoice } from '../types';
 import { AttachmentLink, ErrorNote, Modal, useAction } from '../components/ui';
+import { VendorPicker } from '../components/VendorPicker';
+import { vendorKey } from '../vendors';
 
 const blank: InvoiceInput = {
   vendorName: '', vendorGstin: '', invoiceNumber: '', invoiceDate: '', taxableAmount: NaN, gstAmount: NaN, totalAmount: NaN, category: '', serviceMonth: '', notes: '',
@@ -25,7 +27,7 @@ function ValidationList({ errors, warnings }: { errors: string[]; warnings: stri
 
 /** Upload / edit an invoice (User 1). */
 export function InvoiceForm({ invoice, onClose, onSaved }: { invoice: Invoice | null; onClose: () => void; onSaved: (id: string) => void }) {
-  const { be, me, invoices } = useStore();
+  const { be, me, invoices, vendors } = useStore();
   const [f, setF] = useState<InvoiceInput>(invoice ? { ...invoice } : blank);
   const [file, setFile] = useState<File | null>(null);
   const [touched, setTouched] = useState(false);
@@ -45,6 +47,9 @@ export function InvoiceForm({ invoice, onClose, onSaved }: { invoice: Invoice | 
   async function save() {
     setTouched(true);
     if (!f.vendorName.trim() || !f.invoiceNumber.trim()) throw new Error('Vendor name and invoice number are required to save.');
+    if (!vendors.some((v) => v.id === vendorKey(f.vendorName))) {
+      throw new Error(`"${f.vendorName}" is not in the vendor list. Pick it from the dropdown, or choose "+ Add new vendor".`);
+    }
     if (![f.taxableAmount, f.gstAmount, f.totalAmount].every(Number.isFinite)) throw new Error('Enter the taxable, GST and total amounts.');
     if (Math.abs(f.taxableAmount + f.gstAmount - f.totalAmount) > config.roundOffTolerance) {
       throw new Error('Taxable + GST does not match the total. Correct the amounts before saving.');
@@ -70,9 +75,13 @@ export function InvoiceForm({ invoice, onClose, onSaved }: { invoice: Invoice | 
       }
     >
       <div className="form-grid">
-        <label className="span-2">Vendor name *
-          <input value={f.vendorName} onChange={(e) => set('vendorName', e.target.value)} placeholder="e.g. Acme Supplies Pvt Ltd" autoFocus />
-        </label>
+        <div className="span-2 field">Vendor name *
+          <VendorPicker
+            value={f.vendorName}
+            autoFocus
+            onSelect={(v) => setF((p) => ({ ...p, vendorName: v.name, vendorGstin: v.gstin }))}
+          />
+        </div>
         <label>Vendor GSTIN
           <input value={f.vendorGstin} onChange={(e) => set('vendorGstin', e.target.value.toUpperCase())} placeholder="27ABCDE1234F1Z5" maxLength={15} className="mono" />
         </label>

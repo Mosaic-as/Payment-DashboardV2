@@ -142,6 +142,21 @@ service cloud.firestore {
       allow delete: if false;   // full audit trail is kept
     }
 
+    // ── Vendor list (built-in names are in the app; added ones live here) ──
+    // Document id = vendor name lower-cased with symbols removed, so the same
+    // vendor can't be added twice.
+    match /vendors/{vendorId} {
+      allow read: if isUser();
+      allow create: if (hasRole('maker') || hasRole('admin'))
+        && vendorId.matches('^[a-z0-9]{2,120}$')
+        && request.resource.data.keys().hasOnly(['name', 'gstin', 'createdBy', 'createdAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 2 && request.resource.data.name.size() <= 120
+        && request.resource.data.gstin is string
+        && request.resource.data.createdBy == email();
+      allow update, delete: if hasRole('admin');
+    }
+
     // ── Outgoing email (Firebase "Trigger Email" extension), optional ───────
     match /mail/{id} {
       allow create: if hasRole('approver2') || hasRole('approver3');

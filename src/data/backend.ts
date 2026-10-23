@@ -12,6 +12,8 @@ export interface Backend {
   subscribeInvoices(cb: (rows: Invoice[]) => void): () => void;
   subscribeBatches(cb: (rows: Batch[]) => void): () => void;
   subscribeUsers(cb: (rows: AppUser[]) => void): () => void;
+  /** Vendors added by users (the built-in list is in src/vendors.ts). */
+  subscribeVendors(cb: (rows: { id: string; name: string; gstin: string }[]) => void): () => void;
   /** Applies all operations atomically. */
   commit(ops: WriteOp[]): Promise<void>;
   /** Stores an invoice copy (Drive: in the service-month folder). */

@@ -3,7 +3,8 @@ import { paymentWorkbookBase64 } from '../lib/excel';
 import { driveFileName, formatINR, newId, nowIso } from '../lib/format';
 import { makeDupKey } from '../lib/validation';
 import { LEVEL_OF, makeBatchNo, nextStatusOnApprove, planBatches, routeLabel, verifyBatchTotal } from '../lib/workflow';
-import type { AppUser, Batch, HistoryEntry, Invoice, WriteOp } from '../types';
+import type { AppUser, Batch, HistoryEntry, Invoice, Vendor, WriteOp } from '../types';
+import { vendorKey } from '../vendors';
 import type { Backend } from './backend';
 
 export type InvoiceInput = Pick<
@@ -216,4 +217,20 @@ export async function saveUser(be: Backend, u: AppUser) {
 
 export async function removeUser(be: Backend, email: string) {
   await be.commit([{ type: 'delete', col: 'users', id: email }]);
+}
+
+const GSTIN_RE = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+/** Adds a vendor to the shared list. Returns the existing one if the name is already there. */
+export async function addVendor(be: Backend, by: string, existing: Vendor[], name: string, gstin: string): Promise<Vendor> {
+  const clean = name.trim().replace(/\s+/g, ' ');
+  const id = vendorKey(clean);
+  if (clean.length < 2 || !id) throw new Error('Enter the vendor name.');
+  if (clean.length > 120) throw new Error('Vendor name is too long.');
+  const g = gstin.trim().toUpperCase();
+  if (g && !GSTIN_RE.test(g)) throw new Error('GSTIN format is invalid (15 characters, e.g. 27ABCDE1234F1Z5).');
+  const dup = existing.find((v) => v.id === id);
+  if (dup) return dup;
+  await be.commit([{ type: 'set', col: 'vendors', id, data: { name: clean, gstin: g, createdBy: by, createdAt: nowIso() } }]);
+  return { id, name: clean, gstin: g, custom: true };
 }

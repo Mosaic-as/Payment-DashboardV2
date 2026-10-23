@@ -133,6 +133,22 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--primary)
 .form-grid label { display: flex; flex-direction: column; gap: 4px; font-weight: 550; font-size: 13px; }
 .form-grid label.inline { flex-direction: row; align-items: center; gap: 8px; align-self: end; padding-bottom: 8px; }
 .span-2 { grid-column: span 2; }
+.form-grid .field { display: flex; flex-direction: column; gap: 4px; font-weight: 550; font-size: 13px; }
+
+/* Vendor dropdown */
+.vendor-picker { position: relative; display: flex; flex-direction: column; gap: 4px; font-weight: 400; }
+.vendor-picker > input { width: 100%; }
+.vendor-list {
+  position: absolute; top: 40px; left: 0; right: 0; z-index: 20; margin: 0; padding: 4px; list-style: none;
+  max-height: 260px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 8px 24px rgb(15 23 42 / 0.18); font-size: 14px;
+}
+.vendor-list li { padding: 7px 10px; border-radius: 6px; cursor: pointer; }
+.vendor-list li.active { background: var(--primary-soft); }
+.vendor-list .vendor-none { cursor: default; }
+.vendor-list .vendor-add { color: var(--primary); font-weight: 600; border-top: 1px solid var(--border); margin-top: 4px; position: sticky; bottom: -4px; background: var(--surface); }
+.vendor-list .vendor-add.active { background: var(--primary-soft); }
+.vendor-new { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px dashed var(--primary); border-radius: 8px; background: var(--surface-2); }
 .span-3 { grid-column: 1 / -1; }
 
 /* Toolbar & chips */

@@ -27,6 +27,7 @@ Upload invoice → Review & Validate → Send ──────▶ Approve ─�
   * An attachment and a service month are required.
 
   The **Validate** button stays disabled until User 1 ticks the double-check confirmation.
+* The **vendor** is picked from a searchable dropdown (79 vendors built in, in `src/vendors.ts`). If a vendor is missing, **+ Add new vendor** saves it, with an optional GSTIN, for everyone. Picking a vendor with a saved GSTIN fills the GSTIN in automatically. The **expense categories** (16 `Warehouse - …` heads) are set in `src/config.ts`.
 * If the service month, vendor or invoice number is corrected later, the Drive file is moved to the correct folder and renamed.
 * After validation, User 1 can **send** one invoice right away, or select many invoices and **send them in bulk**. Selected invoices are grouped into **one batch per expense category**. An Excel file is downloaded, and the Google Sheet is updated.
 * The **₹20 lakh rule** applies to the **batch total**. A batch above ₹20,00,000 goes to User 4. Otherwise, User 3's approval sends it straight to Finance. The rule is also enforced on the server in `firestore.rules`.
@@ -114,6 +115,7 @@ Sign in to the site as the admin and add people under **Users & roles**. The rol
 
 ```
 src/config.ts               domains, Google IDs, ₹20 L threshold, categories
+src/vendors.ts              built-in vendor list
 src/lib/validation.ts       invoice checks
 src/lib/workflow.ts         routing, batching, stage logic
 src/lib/excel.ts            Excel export and Google Sheet rows (same columns)
