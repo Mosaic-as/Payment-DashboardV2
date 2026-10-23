@@ -2,8 +2,10 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { STAGE_LABELS, type Invoice, type InvoiceStage } from '../types';
 import { useStore } from '../data/store';
 
-export function Modal({ title, onClose, children, footer, wide }: {
+export function Modal({ title, onClose, children, footer, wide, xl }: {
   title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean;
+  /** Nearly full-screen, for the form + invoice copy side by side. */
+  xl?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -12,7 +14,7 @@ export function Modal({ title, onClose, children, footer, wide }: {
   }, [onClose]);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true">
+      <div className={`modal ${wide ? 'modal-wide' : ''} ${xl ? 'modal-xl' : ''}`} role="dialog" aria-modal="true">
         <header className="modal-head">
           <h2>{title}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Close">×</button>

@@ -9,6 +9,7 @@ import { planBatches, routeLabel } from '../lib/workflow';
 import type { Batch, Invoice } from '../types';
 import { AttachmentLink, ErrorNote, Modal, useAction } from '../components/ui';
 import { VendorPicker } from '../components/VendorPicker';
+import { InvoicePreview } from '../components/InvoicePreview';
 import { vendorKey } from '../vendors';
 
 const blank: InvoiceInput = {
@@ -62,7 +63,7 @@ export function InvoiceForm({ invoice, onClose, onSaved }: { invoice: Invoice | 
 
   return (
     <Modal
-      wide
+      xl
       title={invoice ? `Edit invoice ${invoice.invoiceNumber}` : 'Upload invoice'}
       onClose={onClose}
       footer={
@@ -74,11 +75,16 @@ export function InvoiceForm({ invoice, onClose, onSaved }: { invoice: Invoice | 
         </>
       }
     >
-      <div className="form-grid">
+      <div className="split">
+      <div className="split-main">
+      <div className="form-grid form-grid-2">
+        <label className="span-3 file-pick">Invoice copy (PDF / image, max {config.maxAttachmentMb} MB) {invoice?.filePath ? '' : '*'}
+          <input type="file" accept="application/pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          {invoice?.filePath && !file && <span className="muted small">Current: {invoice.fileName} — choose a file only to replace it.</span>}
+        </label>
         <div className="span-2 field">Vendor name *
           <VendorPicker
             value={f.vendorName}
-            autoFocus
             onSelect={(v) => setF((p) => ({ ...p, vendorName: v.name, vendorGstin: v.gstin }))}
           />
         </div>
@@ -115,10 +121,6 @@ export function InvoiceForm({ invoice, onClose, onSaved }: { invoice: Invoice | 
             </button>
           )}
         </label>
-        <label className="span-3">Invoice copy (PDF / image, max {config.maxAttachmentMb} MB) {invoice?.filePath ? '' : '*'}
-          <input type="file" accept="application/pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-          {invoice?.filePath && !file && <span className="muted small">Current: {invoice.fileName} <AttachmentLink inv={invoice} /></span>}
-        </label>
         <label className="span-3">Notes
           <input value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="PO number, period, remarks…" />
         </label>
@@ -126,6 +128,9 @@ export function InvoiceForm({ invoice, onClose, onSaved }: { invoice: Invoice | 
       <h3 className="section-title">Checks {result.gstRate !== null && <span className="muted small">· effective GST rate {result.gstRate}%</span>}</h3>
       {touched || f.vendorName || f.invoiceNumber ? <ValidationList {...result} /> : <div className="muted small">Fill in the details to see checks.</div>}
       <ErrorNote error={error} />
+      </div>
+      <InvoicePreview file={file} inv={invoice} />
+      </div>
     </Modal>
   );
 }
@@ -156,6 +161,7 @@ export function ReviewModal({ invoice, onClose, onEdit, onSend }: { invoice: Inv
 
   return (
     <Modal
+      xl
       title={isValidated ? 'Invoice validated' : 'Review & validate invoice'}
       onClose={onClose}
       footer={
@@ -181,6 +187,8 @@ export function ReviewModal({ invoice, onClose, onEdit, onSend }: { invoice: Inv
         )
       }
     >
+      <div className="split">
+      <div className="split-main">
       {returnNote && (
         <div className="note note-warn">
           Returned by L{returnNote.level} approver ({returnNote.by}): “{returnNote.comment}”. Correct the details if needed and validate again.
@@ -205,6 +213,9 @@ export function ReviewModal({ invoice, onClose, onEdit, onSend }: { invoice: Inv
         </>
       )}
       <ErrorNote error={error} />
+      </div>
+      <InvoicePreview inv={invoice} />
+      </div>
     </Modal>
   );
 }
