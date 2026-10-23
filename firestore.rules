@@ -58,8 +58,12 @@ service cloud.firestore {
     }
     function batchPath(id) { return /databases/$(database)/documents/batches/$(id); }
     // Editable unless it sits in a batch that is still in approval / paid.
-    function unlocked(inv) {
-      return inv.batchId == null || !exists(batchPath(inv.batchId)) || get(batchPath(inv.batchId)).data.status == 'REJECTED';
+    // A rejected batch, or an invoice an approver took out of its batch, is editable.
+    function unlocked(inv, id) {
+      return inv.batchId == null
+        || !exists(batchPath(inv.batchId))
+        || get(batchPath(inv.batchId)).data.status == 'REJECTED'
+        || !(id in get(batchPath(inv.batchId)).data.invoiceIds);
     }
 
     match /invoices/{invoiceId} {
@@ -75,7 +79,7 @@ service cloud.firestore {
       // (a) edit or validate while not locked in an active batch
       allow update: if hasRole('maker')
         && unchanged(['createdBy', 'createdAt'])
-        && unlocked(resource.data)
+        && unlocked(resource.data, invoiceId)
         && request.resource.data.batchId == null
         && amountsOk(request.resource.data)
         && (request.resource.data.status == 'DRAFT'
@@ -100,9 +104,8 @@ service cloud.firestore {
     function lastApproval() { return request.resource.data.approvals[request.resource.data.approvals.size() - 1]; }
 
     // Approver at `level` moves a batch out of `from` to `to` (approve) or REJECTED.
-    function decide(role, level, from, to) {
-      return hasRole(role)
-        && resource.data.status == from
+    function decide(level, from, to) {
+      return resource.data.status == from
         && changed().hasOnly(['status', 'approvals', 'updatedAt'])
         && request.resource.data.approvals.size() == resource.data.approvals.size() + 1
         && request.resource.data.approvals[0:resource.data.approvals.size()] == resource.data.approvals
@@ -111,6 +114,43 @@ service cloud.firestore {
         && ((request.resource.data.status == to && lastApproval().decision == 'APPROVED')
             || (request.resource.data.status == 'REJECTED' && lastApproval().decision == 'REJECTED'
                 && lastApproval().comment is string && lastApproval().comment.size() > 0));
+    }
+
+    // Approver at the batch's current level takes some invoices out and sends
+    // them back to User 1. The batch keeps its level; totals and the >20 lakh
+    // routing must match what is left.
+    function returnSome(level, at) {
+      return resource.data.status == at
+        && request.resource.data.status == at
+        && changed().hasOnly(['invoiceIds', 'invoiceCount', 'taxableTotal', 'gstTotal', 'totalAmount', 'requiresL3', 'returned', 'updatedAt'])
+        && request.resource.data.invoiceIds.size() > 0
+        && request.resource.data.invoiceIds.size() < resource.data.invoiceIds.size()
+        && resource.data.invoiceIds.hasAll(request.resource.data.invoiceIds)
+        && request.resource.data.invoiceCount == request.resource.data.invoiceIds.size()
+        && request.resource.data.totalAmount is number
+        && request.resource.data.totalAmount > 0
+        && request.resource.data.totalAmount < resource.data.totalAmount
+        && request.resource.data.requiresL3 == (request.resource.data.totalAmount > threshold())
+        && request.resource.data.returned.size() > resource.data.get('returned', []).size()
+        && request.resource.data.returned[request.resource.data.returned.size() - 1].by == email()
+        && request.resource.data.returned[request.resource.data.returned.size() - 1].level == level
+        && request.resource.data.returned[request.resource.data.returned.size() - 1].reason.size() > 0;
+    }
+
+    function markPaid() {
+      return resource.data.status == 'WITH_FINANCE'
+        && request.resource.data.status == 'PAID'
+        && changed().hasOnly(['status', 'paymentRef', 'paidAt', 'paidBy', 'updatedAt'])
+        && request.resource.data.paidBy == email()
+        && request.resource.data.paymentRef is string
+        && request.resource.data.paymentRef.size() > 0;
+    }
+
+    function batchUpdate(role) {
+      return (role == 'approver1' && (decide(1, 'PENDING_L1', 'PENDING_L2') || returnSome(1, 'PENDING_L1')))
+        || (role == 'approver2' && (decide(2, 'PENDING_L2', resource.data.requiresL3 ? 'PENDING_L3' : 'WITH_FINANCE') || returnSome(2, 'PENDING_L2')))
+        || (role == 'approver3' && (decide(3, 'PENDING_L3', 'WITH_FINANCE') || returnSome(3, 'PENDING_L3')))
+        || (role == 'finance' && markPaid());
     }
 
     match /batches/{batchId} {
@@ -128,16 +168,9 @@ service cloud.firestore {
         && request.resource.data.requiresL3 == (request.resource.data.totalAmount > threshold())
         && request.resource.data.paymentRef == null;
 
-      allow update: if decide('approver1', 1, 'PENDING_L1', 'PENDING_L2')
-        || decide('approver2', 2, 'PENDING_L2', resource.data.requiresL3 ? 'PENDING_L3' : 'WITH_FINANCE')
-        || decide('approver3', 3, 'PENDING_L3', 'WITH_FINANCE')
-        || (hasRole('finance')
-            && resource.data.status == 'WITH_FINANCE'
-            && request.resource.data.status == 'PAID'
-            && changed().hasOnly(['status', 'paymentRef', 'paidAt', 'paidBy', 'updatedAt'])
-            && request.resource.data.paidBy == email()
-            && request.resource.data.paymentRef is string
-            && request.resource.data.paymentRef.size() > 0);
+      // The user's role is read once here: each rule check may look up at
+      // most 10 documents, so the role must not be re-read per branch.
+      allow update: if isUser() && batchUpdate(get(userPath()).data.role);
 
       allow delete: if false;   // full audit trail is kept
     }
@@ -147,7 +180,7 @@ service cloud.firestore {
     // vendor can't be added twice.
     match /vendors/{vendorId} {
       allow read: if isUser();
-      allow create: if (hasRole('maker') || hasRole('admin'))
+      allow create: if isUser() && get(userPath()).data.role in ['maker', 'admin']
         && vendorId.matches('^[a-z0-9]{2,120}$')
         && request.resource.data.keys().hasOnly(['name', 'gstin', 'createdBy', 'createdAt'])
         && request.resource.data.name is string
@@ -159,7 +192,7 @@ service cloud.firestore {
 
     // ── Outgoing email (Firebase "Trigger Email" extension), optional ───────
     match /mail/{id} {
-      allow create: if hasRole('approver2') || hasRole('approver3');
+      allow create: if isUser() && get(userPath()).data.role in ['approver2', 'approver3'];
       allow read, update, delete: if false;
     }
   }

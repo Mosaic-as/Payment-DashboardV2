@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { approveBatch, rejectBatch } from '../data/actions';
+import { approveBatch, rejectBatch, returnInvoices } from '../data/actions';
 import { useStore } from '../data/store';
 import { config } from '../config';
 import { formatDateTime, formatINR, formatLakh } from '../lib/format';
@@ -8,7 +8,13 @@ import { STAGE_LABELS, type Batch } from '../types';
 import { BatchDetail } from '../components/BatchDetail';
 import { Empty, ErrorNote, StageBadge, useAction } from '../components/ui';
 
-function DecisionPanel({ batch, onDone }: { batch: Batch; onDone: () => void }) {
+function DecisionPanel({ batch, selected, clearSelection, onDone }: {
+  batch: Batch;
+  /** Invoices ticked in the batch table, to be returned individually. */
+  selected: string[];
+  clearSelection: () => void;
+  onDone: () => void;
+}) {
   const { be, me, invoicesById } = useStore();
   const [comment, setComment] = useState('');
   const [mode, setMode] = useState<'idle' | 'reject'>('idle');
@@ -16,12 +22,45 @@ function DecisionPanel({ batch, onDone }: { batch: Batch; onDone: () => void }) 
   const ok = verifyBatchTotal(batch, [...invoicesById.values()]).ok;
   const next = STAGE_LABELS[nextStatusOnApprove(batch)];
 
+  if (selected.length) {
+    const amount = selected.reduce((s, id) => s + (invoicesById.get(id)?.totalAmount ?? 0), 0);
+    const all = selected.length >= batch.invoiceIds.length;
+    return (
+      <div className="decision">
+        <ErrorNote error={error} />
+        <span className="small"><b>{selected.length}</b> invoice(s) ticked · {formatINR(amount)}</span>
+        <input
+          className="decision-input"
+          placeholder="Reason for returning (required) — shown to User 1"
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+        />
+        <button className="btn btn-ghost" onClick={clearSelection}>Clear</button>
+        {all ? (
+          <span className="small warn-text">All invoices ticked — use Reject for the whole batch.</span>
+        ) : (
+          <button
+            className="btn btn-danger"
+            disabled={busy || !comment.trim()}
+            onClick={() => run(async () => {
+              await returnInvoices(be, me.email, batch, selected, comment, invoicesById);
+              setComment('');
+              clearSelection();
+            })}
+          >
+            {busy ? 'Returning…' : `Return ${selected.length} to User 1`}
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="decision">
       <ErrorNote error={error} />
       <input
         className="decision-input"
-        placeholder={mode === 'reject' ? 'Reason for rejection (required) — sent back to User 1' : 'Comment (optional)'}
+        placeholder={mode === 'reject' ? 'Reason for rejecting the whole batch (required) — sent back to User 1' : 'Comment (optional)'}
         value={comment}
         onChange={(e) => setComment(e.target.value)}
       />
@@ -29,12 +68,12 @@ function DecisionPanel({ batch, onDone }: { batch: Batch; onDone: () => void }) 
         <>
           <button className="btn btn-ghost" onClick={() => setMode('idle')}>Back</button>
           <button className="btn btn-danger" disabled={busy || !comment.trim()} onClick={() => run(async () => { await rejectBatch(be, me.email, batch, comment); onDone(); })}>
-            Confirm reject
+            Confirm reject batch
           </button>
         </>
       ) : (
         <>
-          <button className="btn btn-outline danger" onClick={() => setMode('reject')}>Reject…</button>
+          <button className="btn btn-outline danger" onClick={() => setMode('reject')}>Reject batch…</button>
           <button
             className="btn btn-success"
             disabled={busy || !ok}
@@ -113,7 +152,9 @@ export function ApprovalQueue() {
         <BatchDetail
           batch={open}
           onClose={() => setOpenId(null)}
-          actions={open.status === status ? <DecisionPanel batch={open} onDone={() => setOpenId(null)} /> : undefined}
+          actions={open.status === status
+            ? (selected, clear) => <DecisionPanel batch={open} selected={selected} clearSelection={clear} onDone={() => setOpenId(null)} />
+            : undefined}
         />
       )}
     </section>

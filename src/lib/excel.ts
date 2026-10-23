@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx';
 import type { Batch, Invoice } from '../types';
 import { STAGE_LABELS } from '../types';
 import { formatDateTime, formatMonth } from './format';
-import { routeLabel, stageOf } from './workflow';
+import { returnInfo, routeLabel, stageOf } from './workflow';
 
 type Row = Record<string, string | number>;
 
@@ -50,6 +50,7 @@ export function batchSummaryRows(batches: Batch[]): Row[] {
     ...approvalCols(b, 3),
     'Payment Ref / UTR': b.paymentRef ?? '',
     'Paid At': formatDateTime(b.paidAt),
+    'Returned Invoices': (b.returned ?? []).map((r) => `${r.invoiceNumber} (L${r.level}: ${r.reason})`).join('; '),
   }));
 }
 
@@ -76,6 +77,7 @@ export function allInvoiceRows(invoices: Invoice[], batchesById: Map<string, Bat
     'Batch No': (i.batchId && batchesById.get(i.batchId)?.batchNo) || '',
     ...invoiceCols(i),
     'Uploaded At': formatDateTime(i.createdAt),
+    'Return Reason': returnInfo(i, batchesById)?.reason ?? '',
     'Invoice Copy': i.fileUrl || i.fileName,
   }));
 }

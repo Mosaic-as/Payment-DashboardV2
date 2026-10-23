@@ -5,7 +5,7 @@ import { useStore } from '../data/store';
 import { downloadPaymentWorkbook } from '../lib/excel';
 import { currentMonth, formatDate, formatINR, formatLakh, formatMonth, monthFolderName, round2, todayIso } from '../lib/format';
 import { validateInvoice } from '../lib/validation';
-import { planBatches, routeLabel } from '../lib/workflow';
+import { planBatches, returnInfo, routeLabel } from '../lib/workflow';
 import type { Batch, Invoice } from '../types';
 import { AttachmentLink, ErrorNote, Modal, useAction } from '../components/ui';
 import { VendorPicker } from '../components/VendorPicker';
@@ -142,8 +142,7 @@ export function ReviewModal({ invoice, onClose, onEdit, onSend }: { invoice: Inv
   const { busy, error, run } = useAction();
   const result = validateInvoice({ ...invoice, hasAttachment: !!invoice.filePath }, invoices);
   const isValidated = invoice.status === 'VALIDATED' && !invoice.batchId;
-  const returned = invoice.batchId ? batchesById.get(invoice.batchId) : undefined;
-  const returnNote = returned?.status === 'REJECTED' ? [...returned.approvals].reverse().find((a) => a.decision === 'REJECTED') : undefined;
+  const returnNote = returnInfo(invoice, batchesById);
 
   const rows: [string, React.ReactNode][] = [
     ['Vendor', invoice.vendorName],
@@ -191,7 +190,7 @@ export function ReviewModal({ invoice, onClose, onEdit, onSend }: { invoice: Inv
       <div className="split-main">
       {returnNote && (
         <div className="note note-warn">
-          Returned by L{returnNote.level} approver ({returnNote.by}): “{returnNote.comment}”. Correct the details if needed and validate again.
+          Returned by L{returnNote.level} approver ({returnNote.by}): “{returnNote.reason}”. Correct the details if needed and validate again.
         </div>
       )}
       <dl className="detail-list">

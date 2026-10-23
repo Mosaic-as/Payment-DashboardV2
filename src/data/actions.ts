@@ -1,8 +1,8 @@
 import { config } from '../config';
 import { paymentWorkbookBase64 } from '../lib/excel';
-import { driveFileName, formatINR, newId, nowIso } from '../lib/format';
+import { driveFileName, formatINR, newId, nowIso, round2 } from '../lib/format';
 import { makeDupKey } from '../lib/validation';
-import { LEVEL_OF, makeBatchNo, nextStatusOnApprove, planBatches, routeLabel, verifyBatchTotal } from '../lib/workflow';
+import { LEVEL_OF, makeBatchNo, nextStatusOnApprove, planBatches, requiresL3, routeLabel, verifyBatchTotal } from '../lib/workflow';
 import type { AppUser, Batch, HistoryEntry, Invoice, Vendor, WriteOp } from '../types';
 import { vendorKey } from '../vendors';
 import type { Backend } from './backend';
@@ -174,6 +174,43 @@ export async function rejectBatch(be: Backend, by: string, batch: Batch, reason:
     data: {
       status: 'REJECTED',
       approvals: [...batch.approvals, { level, by, at: now, decision: 'REJECTED', comment: reason.trim() }],
+      updatedAt: now,
+    },
+  }]);
+}
+
+/**
+ * Takes selected invoices out of a batch and sends them back to User 1.
+ * The rest of the batch stays at the same approval level; its totals and
+ * the >₹20 lakh routing are recalculated.
+ */
+export async function returnInvoices(be: Backend, by: string, batch: Batch, invoiceIds: string[], reason: string, invoicesById: Map<string, Invoice>) {
+  const level = LEVEL_OF[batch.status];
+  if (!level) throw new Error('This batch is not awaiting approval.');
+  if (!reason.trim()) throw new Error('A reason is required to return invoices.');
+  const ids = new Set(invoiceIds.filter((id) => batch.invoiceIds.includes(id)));
+  if (!ids.size) throw new Error('Select the invoices to return.');
+  const remaining = batch.invoiceIds.filter((id) => !ids.has(id));
+  if (!remaining.length) throw new Error('All invoices are selected. Use Reject to return the whole batch.');
+  const keep = remaining.map((id) => invoicesById.get(id));
+  if (keep.some((i) => !i)) throw new Error('Some invoices in this batch could not be loaded. Refresh and try again.');
+  const now = nowIso();
+  const sum = (k: 'taxableAmount' | 'gstAmount' | 'totalAmount') => round2(keep.reduce((s, i) => s + i![k], 0));
+  const totalAmount = sum('totalAmount');
+  const returned = [...ids].map((id) => {
+    const i = invoicesById.get(id)!;
+    return { invoiceId: id, invoiceNumber: i.invoiceNumber, vendorName: i.vendorName, totalAmount: i.totalAmount, level, by, at: now, reason: reason.trim() };
+  });
+  await be.commit([{
+    type: 'update', col: 'batches', id: batch.id,
+    data: {
+      invoiceIds: remaining,
+      invoiceCount: remaining.length,
+      taxableTotal: sum('taxableAmount'),
+      gstTotal: sum('gstAmount'),
+      totalAmount,
+      requiresL3: requiresL3(totalAmount),
+      returned: [...(batch.returned ?? []), ...returned],
       updatedAt: now,
     },
   }]);

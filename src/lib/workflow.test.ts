@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { Batch, Invoice } from '../types';
+import type { Batch, Invoice, WriteOp } from '../types';
+import type { Backend } from '../data/backend';
+import { returnInvoices } from '../data/actions';
 import { validateInvoice, makeDupKey } from './validation';
-import { makeBatchNo, nextStatusOnApprove, planBatches, requiresL3, stageOf, verifyBatchTotal } from './workflow';
+import { makeBatchNo, nextStatusOnApprove, planBatches, returnInfo, requiresL3, stageOf, verifyBatchTotal } from './workflow';
 import { allInvoiceRows, buildPaymentWorkbook, toTable } from './excel';
 import { driveFileName, monthFolderName } from './format';
 import * as XLSX from 'xlsx';
@@ -54,8 +56,8 @@ describe('stageOf / verifyBatchTotal', () => {
   });
   it('shows a rejected batch as Returned on its invoices', () => {
     const i = inv({ batchId: 'b1' });
-    expect(stageOf(i, new Map([['b1', b({ status: 'REJECTED' })]]))).toBe('RETURNED');
-    expect(stageOf(i, new Map([['b1', b({ status: 'PENDING_L2' })]]))).toBe('PENDING_L2');
+    expect(stageOf(i, new Map([['b1', b({ status: 'REJECTED', invoiceIds: [i.id] })]]))).toBe('RETURNED');
+    expect(stageOf(i, new Map([['b1', b({ status: 'PENDING_L2', invoiceIds: [i.id] })]]))).toBe('PENDING_L2');
     expect(stageOf(inv(), new Map())).toBe('VALIDATED');
   });
   it('detects a tampered batch total', () => {
@@ -129,5 +131,46 @@ describe('categories and vendors', () => {
   it('treats differently written vendor names as the same vendor', () => {
     expect(vendorKey('M/S Liberal')).toBe(vendorKey('m/s  liberal.'));
     expect(new Set(DEFAULT_VENDORS.map(vendorKey)).size).toBe(DEFAULT_VENDORS.length);
+  });
+});
+
+describe('returning single invoices from a batch', () => {
+  const batchOf = (invs: Invoice[], over: Partial<Batch> = {}): Batch => ({
+    id: 'b1', batchNo: 'B1', category: 'Warehouse - Rent', invoiceIds: invs.map((i) => i.id), invoiceCount: invs.length,
+    taxableTotal: 0, gstTotal: 0, totalAmount: invs.reduce((s, i) => s + i.totalAmount, 0), requiresL3: true,
+    status: 'PENDING_L2', approvals: [], createdBy: 'm@x.com', createdAt: '', updatedAt: '', paymentRef: null, paidAt: null, paidBy: null,
+    ...over,
+  });
+  const big = inv({ id: 'big', batchId: 'b1', taxableAmount: 1_525_423.73, gstAmount: 274_576.27, totalAmount: 1_800_000 });
+  const small = inv({ id: 'small', batchId: 'b1', taxableAmount: 508_474.58, gstAmount: 91_525.42, totalAmount: 600_000 });
+
+  it('recalculates totals and drops the L3 step when the batch falls to ₹20 lakh or less', async () => {
+    const ops: WriteOp[] = [];
+    const be = { commit: async (o: WriteOp[]) => void ops.push(...o) } as unknown as Backend;
+    const b = batchOf([big, small]);
+    await returnInvoices(be, 'a2@x.com', b, ['small'], 'Wrong GST rate', new Map([[big.id, big], [small.id, small]]));
+    const d = ops[0].data as Partial<Batch>;
+    expect(d.invoiceIds).toEqual(['big']);
+    expect(d.invoiceCount).toBe(1);
+    expect(d.totalAmount).toBe(1_800_000);
+    expect(d.requiresL3).toBe(false);
+    expect(d.returned?.[0]).toMatchObject({ invoiceId: 'small', level: 2, by: 'a2@x.com', reason: 'Wrong GST rate' });
+    expect(d.status).toBeUndefined(); // stays at the same level
+  });
+
+  it('refuses to return every invoice (that is a batch rejection) or without a reason', async () => {
+    const be = { commit: async () => {} } as unknown as Backend;
+    const m = new Map([[big.id, big], [small.id, small]]);
+    await expect(returnInvoices(be, 'a', batchOf([big, small]), ['big', 'small'], 'x', m)).rejects.toThrow(/Reject/);
+    await expect(returnInvoices(be, 'a', batchOf([big, small]), ['small'], '  ', m)).rejects.toThrow(/reason/);
+  });
+
+  it('shows a taken-out invoice as Returned with the approver reason', () => {
+    const b = batchOf([big], { returned: [{ invoiceId: 'small', invoiceNumber: 'X', vendorName: 'V', totalAmount: 1, level: 2, by: 'a2@x.com', at: '', reason: 'Wrong GST rate' }] });
+    const map = new Map([['b1', b]]);
+    expect(stageOf(small, map)).toBe('RETURNED');
+    expect(stageOf(big, map)).toBe('PENDING_L2');
+    expect(returnInfo(small, map)?.reason).toBe('Wrong GST rate');
+    expect(returnInfo(big, map)).toBeNull();
   });
 });

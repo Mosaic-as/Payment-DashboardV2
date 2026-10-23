@@ -42,7 +42,8 @@ export function routeLabel(requiresL3: boolean): string {
 export function stageOf(inv: Invoice, batches: Map<string, Batch>): InvoiceStage {
   if (inv.batchId) {
     const b = batches.get(inv.batchId);
-    if (b) return b.status === 'REJECTED' ? 'RETURNED' : b.status;
+    // Rejected batch, or this invoice was returned on its own.
+    if (b) return b.status === 'REJECTED' || !b.invoiceIds.includes(inv.id) ? 'RETURNED' : b.status;
   }
   return inv.status;
 }
@@ -91,4 +92,15 @@ export function verifyBatchTotal(batch: Batch, invoices: Invoice[]): { ok: boole
   const actual = round2(found.reduce((s, i) => s + i.totalAmount, 0));
   const missing = batch.invoiceIds.length - found.length;
   return { ok: missing === 0 && Math.abs(actual - batch.totalAmount) < 0.01, actual, missing };
+}
+
+/** Why an invoice came back to User 1: an individual return, or the whole batch being rejected. */
+export function returnInfo(inv: Invoice, batches: Map<string, Batch>): { level: number; by: string; reason: string } | null {
+  const b = inv.batchId ? batches.get(inv.batchId) : undefined;
+  if (!b) return null;
+  const own = b.returned?.find((r) => r.invoiceId === inv.id);
+  if (own) return { level: own.level, by: own.by, reason: own.reason };
+  if (b.status !== 'REJECTED') return null;
+  const rej = [...b.approvals].reverse().find((a) => a.decision === 'REJECTED');
+  return rej ? { level: rej.level, by: rej.by, reason: rej.comment } : null;
 }

@@ -79,6 +79,18 @@ export interface Approval {
   comment: string;
 }
 
+/** An invoice an approver took out of a batch and sent back to User 1. */
+export interface ReturnedInvoice {
+  invoiceId: string;
+  invoiceNumber: string;
+  vendorName: string;
+  totalAmount: number;
+  level: 1 | 2 | 3;
+  by: string;
+  at: string;
+  reason: string;
+}
+
 export interface Batch {
   id: string;
   batchNo: string;
@@ -91,6 +103,8 @@ export interface Batch {
   requiresL3: boolean;
   status: BatchStatus;
   approvals: Approval[];
+  /** Invoices returned individually; they are no longer in invoiceIds. */
+  returned?: ReturnedInvoice[];
   createdBy: string;
   createdAt: string;
   updatedAt: string;

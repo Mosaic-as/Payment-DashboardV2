@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useStore } from '../data/store';
 import { downloadPaymentWorkbook } from '../lib/excel';
 import { formatAmount, formatDate, formatDateTime, formatINR, formatLakh, formatMonth } from '../lib/format';
@@ -56,19 +56,31 @@ function Timeline({ batch }: { batch: Batch }) {
   );
 }
 
-export function BatchInvoicesTable({ invoices }: { invoices: Invoice[] }) {
+export function BatchInvoicesTable({ invoices, selected, onToggle }: {
+  invoices: Invoice[];
+  /** When given, rows get tick boxes (approver returning single invoices). */
+  selected?: Set<string>;
+  onToggle?: (id: string) => void;
+}) {
+  const selectable = !!selected && !!onToggle && invoices.length > 1;
   return (
     <div className="table-wrap">
       <table className="table">
         <thead>
           <tr>
+            {selectable && <th className="check-col" title="Tick invoices to return them to User 1" />}
             <th>Vendor</th><th>GSTIN</th><th>Invoice no.</th><th>Date</th><th>Service month</th>
             <th className="num">Taxable</th><th className="num">GST</th><th className="num">Total</th><th>Copy</th>
           </tr>
         </thead>
         <tbody>
           {invoices.map((i) => (
-            <tr key={i.id}>
+            <tr key={i.id} className={selected?.has(i.id) ? 'selected' : ''}>
+              {selectable && (
+                <td className="check-col">
+                  <input type="checkbox" aria-label={`Select ${i.invoiceNumber} to return`} checked={selected!.has(i.id)} onChange={() => onToggle!(i.id)} />
+                </td>
+              )}
               <td className="wrap">{i.vendorName}{i.notes && <div className="muted small">{i.notes}</div>}</td>
               <td className="mono small">{i.vendorGstin || '—'}</td>
               <td>{i.invoiceNumber}</td>
@@ -86,10 +98,52 @@ export function BatchInvoicesTable({ invoices }: { invoices: Invoice[] }) {
   );
 }
 
-export function BatchDetail({ batch, onClose, actions }: { batch: Batch; onClose: () => void; actions?: ReactNode }) {
+function ReturnedList({ batch }: { batch: Batch }) {
+  const { nameOf } = useStore();
+  if (!batch.returned?.length) return null;
+  return (
+    <>
+      <h3 className="section-title">Returned to User 1 ({batch.returned.length})</h3>
+      <div className="table-wrap">
+        <table className="table">
+          <thead><tr><th>Invoice no.</th><th>Vendor</th><th className="num">Total</th><th>Returned by</th><th>Reason</th></tr></thead>
+          <tbody>
+            {batch.returned.map((r) => (
+              <tr key={r.invoiceId + r.at}>
+                <td>{r.invoiceNumber}</td>
+                <td className="wrap">{r.vendorName}</td>
+                <td className="num">{formatAmount(r.totalAmount)}</td>
+                <td className="small">L{r.level} · {nameOf(r.by)}<br />{formatDateTime(r.at)}</td>
+                <td className="wrap">{r.reason}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+/**
+ * actions: footer buttons. Pass a function to let the approver tick invoices;
+ * it receives the ticked ids and a callback to clear them.
+ */
+export function BatchDetail({ batch, onClose, actions }: {
+  batch: Batch;
+  onClose: () => void;
+  actions?: ReactNode | ((selectedIds: string[], clear: () => void) => ReactNode);
+}) {
   const { invoicesById } = useStore();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const invoices = batch.invoiceIds.map((id) => invoicesById.get(id)).filter((i): i is Invoice => !!i);
   const check = verifyBatchTotal(batch, invoices);
+  const selectable = typeof actions === 'function';
+  const toggle = (id: string) => setSelected((s) => {
+    const n = new Set(s);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+  const ids = [...selected].filter((id) => batch.invoiceIds.includes(id));
   return (
     <Modal
       wide
@@ -101,7 +155,7 @@ export function BatchDetail({ batch, onClose, actions }: { batch: Batch; onClose
             ⬇ Excel
           </button>
           <span className="spacer" />
-          {actions}
+          {typeof actions === 'function' ? actions(ids, () => setSelected(new Set())) : actions}
         </>
       }
     >
@@ -120,7 +174,11 @@ export function BatchDetail({ batch, onClose, actions }: { batch: Batch; onClose
         </div>
       )}
       <Timeline batch={batch} />
-      <BatchInvoicesTable invoices={invoices} />
+      {selectable && invoices.length > 1 && (
+        <p className="muted small">Tick any invoice that has a problem to return just that invoice to User 1; the rest of the batch continues.</p>
+      )}
+      <BatchInvoicesTable invoices={invoices} selected={selectable ? selected : undefined} onToggle={selectable ? toggle : undefined} />
+      <ReturnedList batch={batch} />
     </Modal>
   );
 }

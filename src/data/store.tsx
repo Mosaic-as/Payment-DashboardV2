@@ -62,8 +62,9 @@ export function StoreProvider({ be: rawBe, me, children }: { be: Backend; me: St
     ...rawBe,
     async commit(ops) {
       const touchesRegister = ops.some((o) => o.col === 'invoices' || o.col === 'batches');
-      // Ask for Google access while still inside the click, so a pop-up isn't blocked.
-      if (touchesRegister && rawBe.prepareGoogle) await rawBe.prepareGoogle().catch(() => {});
+      // Ask for Google access while still inside the click, so a pop-up isn't
+      // blocked — but never wait for it: the workflow must not depend on the sheet.
+      if (touchesRegister && rawBe.prepareGoogle) void rawBe.prepareGoogle().catch(() => {});
       await rawBe.commit(ops);
       if (touchesRegister) syncSheetNow(1000);
     },

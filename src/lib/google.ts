@@ -37,10 +37,27 @@ export function loadGoogleIdentity(): Promise<void> {
   return gisLoading;
 }
 
-export async function getAccessToken(): Promise<string> {
-  if (cached && Date.now() < cached.exp) return cached.token;
+let pending: Promise<string> | null = null;
+
+/** Returns a Google access token, asking Google (one pop-up at a time) when needed. */
+export function getAccessToken(): Promise<string> {
+  if (cached && Date.now() < cached.exp) return Promise.resolve(cached.token);
+  pending ??= requestToken().finally(() => { pending = null; });
+  return pending;
+}
+
+async function requestToken(): Promise<string> {
   if (!config.google.clientId) throw new Error('Google OAuth client ID is not configured (VITE_GOOGLE_CLIENT_ID).');
   await loadGoogleIdentity();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // A pop-up left open or hidden must not leave anything waiting forever.
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Google access was not confirmed. Click Retry on the Sheet link and allow access in the pop-up.')), 120_000);
+  });
+  return Promise.race([askGoogle(), timeout]).finally(() => clearTimeout(timer));
+}
+
+function askGoogle(): Promise<string> {
   return new Promise((resolve, reject) => {
     const client = window.google!.accounts.oauth2.initTokenClient({
       client_id: config.google.clientId,
