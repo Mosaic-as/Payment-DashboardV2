@@ -1,6 +1,6 @@
 import { config } from '../config';
 import { paymentWorkbookBase64 } from '../lib/excel';
-import { formatINR, newId, nowIso } from '../lib/format';
+import { driveFileName, formatINR, newId, nowIso } from '../lib/format';
 import { makeDupKey } from '../lib/validation';
 import { LEVEL_OF, makeBatchNo, nextStatusOnApprove, planBatches, routeLabel, verifyBatchTotal } from '../lib/workflow';
 import type { AppUser, Batch, HistoryEntry, Invoice, WriteOp } from '../types';
@@ -8,7 +8,7 @@ import type { Backend } from './backend';
 
 export type InvoiceInput = Pick<
   Invoice,
-  'vendorName' | 'vendorGstin' | 'invoiceNumber' | 'invoiceDate' | 'taxableAmount' | 'gstAmount' | 'totalAmount' | 'category' | 'notes'
+  'vendorName' | 'vendorGstin' | 'invoiceNumber' | 'invoiceDate' | 'taxableAmount' | 'gstAmount' | 'totalAmount' | 'category' | 'serviceMonth' | 'notes'
 >;
 
 const entry = (by: string, action: string, note?: string): HistoryEntry => ({ at: nowIso(), by, action, ...(note ? { note } : {}) });
@@ -27,7 +27,16 @@ export async function saveInvoice(be: Backend, by: string, existing: Invoice | n
   let fileFields = {};
   if (file) {
     if (file.size > config.maxAttachmentMb * 1024 * 1024) throw new Error(`Attachment is larger than ${config.maxAttachmentMb} MB.`);
-    fileFields = { filePath: await be.uploadFile(id, file), fileName: file.name };
+    const name = driveFileName(fields.serviceMonth, fields.vendorName, fields.invoiceNumber, file.name);
+    const { path, url } = await be.uploadFile(id, file, { name, serviceMonth: fields.serviceMonth });
+    fileFields = { filePath: path, fileUrl: url, fileName: name };
+  } else if (existing?.filePath && be.relocateFile) {
+    // Keep the Drive copy in the right month folder and named after the invoice.
+    const name = driveFileName(fields.serviceMonth, fields.vendorName, fields.invoiceNumber, existing.fileName);
+    if (name !== existing.fileName || fields.serviceMonth !== existing.serviceMonth) {
+      await be.relocateFile(existing.filePath, { name, serviceMonth: fields.serviceMonth });
+      fileFields = { fileName: name };
+    }
   }
   const now = nowIso();
   if (!existing) {
@@ -35,6 +44,7 @@ export async function saveInvoice(be: Backend, by: string, existing: Invoice | n
       ...fields,
       filePath: '',
       fileName: '',
+      fileUrl: '',
       ...fileFields,
       status: 'DRAFT',
       batchId: null,

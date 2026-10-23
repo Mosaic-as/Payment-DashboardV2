@@ -11,8 +11,12 @@ import {
   type User,
 } from 'firebase/auth';
 import { collection, doc, getFirestore, onSnapshot, writeBatch, type DocumentData } from 'firebase/firestore';
-import { getBlob, getStorage, ref, uploadBytes } from 'firebase/storage';
 import { config, isAllowedEmail } from '../config';
+import { allInvoiceRows, batchSummaryRows, invoiceDetailRows, toTable } from '../lib/excel';
+import {
+  GOOGLE_SCOPES, clearGoogleToken, driveViewUrl, getAccessToken, loadGoogleIdentity, relocateDriveFile,
+  setGoogleHint, setGoogleToken, uploadToDrive, writeSheetTabs,
+} from '../lib/google';
 import type { AppUser, Batch, Invoice } from '../types';
 import type { Backend } from './backend';
 
@@ -22,12 +26,13 @@ export function createFirebaseBackend(): Backend {
   const app = initializeApp(config.firebase);
   const auth = getAuth(app);
   const db = getFirestore(app);
-  const storage = getStorage(app);
   void setPersistence(auth, browserLocalPersistence);
 
   function provider() {
     if (config.ssoProvider === 'google') {
       const p = new GoogleAuthProvider();
+      // Also asks for Drive + Sheets so invoices and the register can be saved.
+      GOOGLE_SCOPES.forEach((s) => p.addScope(s));
       // Pre-selects the Workspace domain; enforcement happens in the rules.
       p.setCustomParameters({ hd: config.allowedDomains[0], prompt: 'select_account' });
       return p;
@@ -62,6 +67,8 @@ export function createFirebaseBackend(): Backend {
           void signOut(auth);
           return cb(null, `${email || 'This account'} is not a company account. Sign in with your @${config.allowedDomains.join(' / @')} email.`);
         }
+        setGoogleHint(email);
+        void loadGoogleIdentity().catch(() => {});
         const name = u.displayName || email;
         unsubProfile = onSnapshot(
           doc(db, 'users', email),
@@ -76,10 +83,13 @@ export function createFirebaseBackend(): Backend {
     },
 
     async signIn() {
-      await signInWithPopup(auth, provider());
+      const result = await signInWithPopup(auth, provider());
+      const token = GoogleAuthProvider.credentialFromResult(result)?.accessToken;
+      if (token) setGoogleToken(token);
     },
 
     async signOut() {
+      clearGoogleToken();
       await signOut(auth);
     },
 
@@ -99,15 +109,33 @@ export function createFirebaseBackend(): Backend {
       await batch.commit();
     },
 
-    async uploadFile(invoiceId, file) {
-      const safe = file.name.replace(/[^\w.\-]+/g, '_').slice(-80);
-      const path = `invoices/${invoiceId}/${Date.now()}_${safe}`;
-      await uploadBytes(ref(storage, path), file, { contentType: file.type });
-      return path;
+    async uploadFile(_invoiceId, file, meta) {
+      if (!config.google.driveFolderId) throw new Error('Google Drive folder is not configured (VITE_DRIVE_FOLDER_ID).');
+      const id = await uploadToDrive(file, meta.name, meta.serviceMonth);
+      return { path: id, url: driveViewUrl(id) };
     },
 
+    relocateFile: (path, meta) => relocateDriveFile(path, meta.name, meta.serviceMonth),
+
     async getFileUrl(path) {
-      return URL.createObjectURL(await getBlob(ref(storage, path)));
+      return driveViewUrl(path);
+    },
+
+    async prepareGoogle() {
+      if (config.google.sheetId || config.google.driveFolderId) await getAccessToken();
+    },
+
+    async syncSheet(invoices, batches) {
+      if (!config.google.sheetId) return;
+      const byCreated = <T extends { createdAt: string }>(xs: T[]) => [...xs].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const sortedBatches = byCreated(batches);
+      const invoicesById = new Map(invoices.map((i) => [i.id, i]));
+      const batchesById = new Map(batches.map((b) => [b.id, b]));
+      await writeSheetTabs([
+        { title: 'Sent for Payment', rows: toTable(invoiceDetailRows(sortedBatches, invoicesById)) },
+        { title: 'Batches', rows: toTable(batchSummaryRows(sortedBatches)) },
+        { title: 'All Invoices', rows: toTable(allInvoiceRows(byCreated(invoices), batchesById)) },
+      ]);
     },
   };
 }

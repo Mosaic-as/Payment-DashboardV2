@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { STAGE_LABELS, type InvoiceStage } from '../types';
+import { STAGE_LABELS, type Invoice, type InvoiceStage } from '../types';
 import { useStore } from '../data/store';
 
 export function Modal({ title, onClose, children, footer, wide }: {
@@ -67,10 +67,13 @@ export function ErrorNote({ error }: { error: string }) {
   return error ? <div className="note note-error" role="alert">{error}</div> : null;
 }
 
-export function AttachmentLink({ path, name }: { path: string; name: string }) {
+export function AttachmentLink({ inv }: { inv: Pick<Invoice, 'filePath' | 'fileName' | 'fileUrl'> }) {
   const { be } = useStore();
   const { busy, error, run } = useAction();
+  const { filePath: path, fileName: name, fileUrl } = inv;
   if (!path) return <span className="muted">No file</span>;
+  // Drive copies open in Drive, which checks the viewer's own access.
+  if (fileUrl) return <a className="link-btn" href={fileUrl} target="_blank" rel="noreferrer" title={name}>📎 View</a>;
   return (
     <span>
       <button

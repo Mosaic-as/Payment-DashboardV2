@@ -14,9 +14,16 @@ export interface Backend {
   subscribeUsers(cb: (rows: AppUser[]) => void): () => void;
   /** Applies all operations atomically. */
   commit(ops: WriteOp[]): Promise<void>;
-  uploadFile(invoiceId: string, file: File): Promise<string>;
-  /** Returns a short-lived URL for viewing an attachment (access-checked). */
+  /** Stores an invoice copy (Drive: in the service-month folder). */
+  uploadFile(invoiceId: string, file: File, meta: { name: string; serviceMonth: string }): Promise<{ path: string; url: string }>;
+  /** Moves/renames a stored copy after the invoice's service month or details change. */
+  relocateFile?(path: string, meta: { name: string; serviceMonth: string }): Promise<void>;
+  /** Returns a URL for viewing an attachment that has no stored link (demo). */
   getFileUrl(path: string): Promise<string>;
+  /** Rewrites the Google Sheet register from the current data. */
+  syncSheet?(invoices: Invoice[], batches: Batch[]): Promise<void>;
+  /** Makes sure Google access is ready; called from a click so any pop-up isn't blocked. */
+  prepareGoogle?(): Promise<void>;
 }
 
 let instance: Backend | null = null;

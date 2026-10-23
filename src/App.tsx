@@ -31,6 +31,34 @@ function tabsFor(role: Role): Tab[] {
   }
 }
 
+function GoogleLinks() {
+  const { be, sheet, syncSheetNow } = useStore();
+  if (be.mode !== 'firebase') return null;
+  const { sheetId, driveFolderId } = config.google;
+  const label = {
+    off: '', idle: 'Sheet', syncing: 'Updating sheet…', ok: 'Sheet updated', error: 'Sheet update failed',
+  }[sheet.state];
+  return (
+    <div className="glinks">
+      {driveFolderId && (
+        <a href={`https://drive.google.com/drive/folders/${driveFolderId}`} target="_blank" rel="noreferrer" title="Invoice copies, by service month">📁 Drive</a>
+      )}
+      {sheetId && (
+        <>
+          <a
+            href={`https://docs.google.com/spreadsheets/d/${sheetId}`}
+            target="_blank"
+            rel="noreferrer"
+            className={`sheet-${sheet.state}`}
+            title={sheet.state === 'error' ? sheet.message : sheet.at ? `Last updated ${new Date(sheet.at).toLocaleTimeString()}` : 'Live payment register'}
+          >📊 {label}</a>
+          {sheet.state === 'error' && <button className="link-btn small" onClick={syncSheetNow}>Retry</button>}
+        </>
+      )}
+    </div>
+  );
+}
+
 function Shell() {
   const { be, me } = useStore();
   const tabs = tabsFor(me.profile.role);
@@ -51,6 +79,7 @@ function Shell() {
             </button>
           ))}
         </nav>
+        <GoogleLinks />
         <div className="who">
           <div>
             <div className="who-name">{me.profile.name || me.name}</div>

@@ -1,6 +1,6 @@
 import { config } from '../config';
 import type { Invoice } from '../types';
-import { round2, todayIso } from './format';
+import { currentMonth, formatMonth, round2, todayIso } from './format';
 
 export interface ValidationResult {
   errors: string[];
@@ -16,7 +16,7 @@ export const makeDupKey = (vendorName: string, invoiceNumber: string) =>
 
 type InvoiceFields = Pick<
   Invoice,
-  'vendorName' | 'vendorGstin' | 'invoiceNumber' | 'invoiceDate' | 'taxableAmount' | 'gstAmount' | 'totalAmount' | 'category'
+  'vendorName' | 'vendorGstin' | 'invoiceNumber' | 'invoiceDate' | 'taxableAmount' | 'gstAmount' | 'totalAmount' | 'category' | 'serviceMonth'
 > & { id?: string; hasAttachment: boolean };
 
 /**
@@ -33,6 +33,9 @@ export function validateInvoice(inv: InvoiceFields, others: Pick<Invoice, 'id' |
   if (!inv.category) errors.push('Expense category is required.');
   else if (!config.expenseCategories.includes(inv.category)) errors.push(`Unknown expense category "${inv.category}".`);
   if (!inv.hasAttachment) errors.push('Attach the invoice copy (PDF or image).');
+  if (!inv.serviceMonth) errors.push('Service month is required (decides the Google Drive folder).');
+  else if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(inv.serviceMonth)) errors.push('Service month is not a valid month.');
+  else if (inv.serviceMonth > currentMonth()) warnings.push(`Service month ${formatMonth(inv.serviceMonth)} is in the future (advance billing?).`);
 
   const nums: [string, number][] = [
     ['Taxable amount', inv.taxableAmount],

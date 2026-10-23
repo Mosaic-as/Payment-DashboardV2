@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useStore } from '../data/store';
 import { downloadPaymentWorkbook } from '../lib/excel';
-import { formatAmount, formatDate, formatDateTime, formatINR, formatLakh } from '../lib/format';
+import { formatAmount, formatDate, formatDateTime, formatINR, formatLakh, formatMonth } from '../lib/format';
 import { routeLabel, verifyBatchTotal } from '../lib/workflow';
 import { config } from '../config';
 import type { Batch, Invoice } from '../types';
@@ -62,7 +62,7 @@ export function BatchInvoicesTable({ invoices }: { invoices: Invoice[] }) {
       <table className="table">
         <thead>
           <tr>
-            <th>Vendor</th><th>GSTIN</th><th>Invoice no.</th><th>Date</th>
+            <th>Vendor</th><th>GSTIN</th><th>Invoice no.</th><th>Date</th><th>Service month</th>
             <th className="num">Taxable</th><th className="num">GST</th><th className="num">Total</th><th>Copy</th>
           </tr>
         </thead>
@@ -73,10 +73,11 @@ export function BatchInvoicesTable({ invoices }: { invoices: Invoice[] }) {
               <td className="mono small">{i.vendorGstin || '—'}</td>
               <td>{i.invoiceNumber}</td>
               <td>{formatDate(i.invoiceDate)}</td>
+              <td>{formatMonth(i.serviceMonth)}</td>
               <td className="num">{formatAmount(i.taxableAmount)}</td>
               <td className="num">{formatAmount(i.gstAmount)}</td>
               <td className="num"><b>{formatAmount(i.totalAmount)}</b></td>
-              <td><AttachmentLink path={i.filePath} name={i.fileName} /></td>
+              <td><AttachmentLink inv={i} /></td>
             </tr>
           ))}
         </tbody>

@@ -48,10 +48,13 @@ service cloud.firestore {
     }
 
     // ── Invoices (written only by User 1 / makers) ──────────────────────────
+    // Invoice copies live in Google Drive (access managed by Drive sharing).
     function amountsOk(d) {
       return d.taxableAmount is number && d.gstAmount is number && d.totalAmount is number
         && d.taxableAmount >= 0 && d.gstAmount >= 0 && d.totalAmount > 0
-        && math.abs(d.taxableAmount + d.gstAmount - d.totalAmount) <= 1;
+        && math.abs(d.taxableAmount + d.gstAmount - d.totalAmount) <= 1
+        && d.serviceMonth is string
+        && d.serviceMonth.matches('^[0-9]{4}-(0[1-9]|1[0-2])$');
     }
     function batchPath(id) { return /databases/$(database)/documents/batches/$(id); }
     // Editable unless it sits in a batch that is still in approval / paid.

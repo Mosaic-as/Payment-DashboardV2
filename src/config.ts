@@ -26,6 +26,18 @@ export const config = {
   /** 'microsoft' for Microsoft 365 / Entra ID, 'google' for Google Workspace. */
   ssoProvider: (env.VITE_SSO_PROVIDER || 'google') as 'microsoft' | 'google',
 
+  /**
+   * Google Workspace storage (used when Firebase is configured):
+   *  • invoice copies → Drive folder <driveFolderId>/<service month>/
+   *  • live register   → Google Sheet <sheetId>
+   * clientId is the OAuth "Web client" ID of the Firebase/Google Cloud project.
+   */
+  google: {
+    clientId: env.VITE_GOOGLE_CLIENT_ID || '',
+    driveFolderId: env.VITE_DRIVE_FOLDER_ID || '',
+    sheetId: env.VITE_SHEET_ID || '',
+  },
+
   /** Microsoft Entra tenant ID (restricts sign-in to your organisation). */
   microsoftTenantId: env.VITE_MICROSOFT_TENANT_ID || '',
 

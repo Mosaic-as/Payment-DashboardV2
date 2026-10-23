@@ -41,10 +41,15 @@ export interface Invoice {
   gstAmount: number;
   totalAmount: number;
   category: string;
+  /** Month the services were taken (yyyy-mm); decides the Drive folder. */
+  serviceMonth: string;
   notes: string;
   dupKey: string;
+  /** Drive file id (or demo storage path). */
   filePath: string;
   fileName: string;
+  /** Link to open the copy (Drive), empty in demo mode. */
+  fileUrl: string;
   status: InvoiceStatus;
   /** Set when sent for approval. Workflow stage then comes from the batch. */
   batchId: string | null;

@@ -6,7 +6,7 @@ import type { Backend } from './backend';
  * Everything is stored in this browser's localStorage, there is no real SSO,
  * and anyone can pick any role. Never use for real invoices.
  */
-const KEY = 'ipa-demo-db-v2';
+const KEY = 'ipa-demo-db-v3';
 const SESSION_KEY = 'ipa-demo-session';
 const FILE_PREFIX = 'ipa-demo-file:';
 
@@ -96,8 +96,8 @@ export function createDemoBackend(): Backend {
       save();
       emit('invoices'); emit('batches'); emit('users');
     },
-    async uploadFile(invoiceId, file) {
-      const path = `invoices/${invoiceId}/${Date.now()}_${file.name}`;
+    async uploadFile(invoiceId, file, meta) {
+      const path = `invoices/${invoiceId}/${Date.now()}_${meta.name}`;
       if (file.size < 1_500_000) {
         const dataUrl = await new Promise<string>((res, rej) => {
           const r = new FileReader();
@@ -107,7 +107,7 @@ export function createDemoBackend(): Backend {
         });
         try { safeSet(FILE_PREFIX + path, dataUrl); } catch { /* demo: keep the name only */ }
       }
-      return path;
+      return { path, url: '' };
     },
     async getFileUrl(path) {
       const url = safeGet(FILE_PREFIX + path);

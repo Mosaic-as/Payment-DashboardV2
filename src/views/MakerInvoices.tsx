@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { deleteInvoice } from '../data/actions';
 import { useStore } from '../data/store';
-import { formatAmount, formatDate, formatINR } from '../lib/format';
+import { formatAmount, formatDate, formatINR, formatMonth } from '../lib/format';
 import { isEditable, stageOf } from '../lib/workflow';
 import { STAGE_LABELS, type Invoice, type InvoiceStage } from '../types';
 import { AttachmentLink, Empty, ErrorNote, StageBadge, useAction } from '../components/ui';
@@ -29,7 +29,7 @@ export function MakerInvoices() {
   const needle = q.trim().toLowerCase();
   const visible = rows.filter(({ inv, stage }) => {
     if (filter === 'ACTIVE' ? !isEditable(stage) : filter !== 'ALL' && stage !== filter) return false;
-    return !needle || [inv.vendorName, inv.invoiceNumber, inv.category, inv.vendorGstin].some((s) => s.toLowerCase().includes(needle));
+    return !needle || [inv.vendorName, inv.invoiceNumber, inv.category, inv.vendorGstin, formatMonth(inv.serviceMonth)].some((s) => s.toLowerCase().includes(needle));
   });
   // Security rules only let the user who validated an invoice send it.
   const canSend = (inv: Invoice, stage: InvoiceStage) => stage === 'VALIDATED' && inv.validatedBy === me.email;
@@ -101,7 +101,7 @@ export function MakerInvoices() {
                     onChange={() => setSelected(allSelected ? new Set() : new Set(sendable.map((r) => r.inv.id)))}
                   />
                 </th>
-                <th>Vendor</th><th>Invoice no.</th><th>Date</th><th>Category</th>
+                <th>Vendor</th><th>Invoice no.</th><th>Date</th><th>Category</th><th>Service month</th>
                 <th className="num">Taxable</th><th className="num">GST</th><th className="num">Total</th>
                 <th>Status</th><th>Copy</th><th className="actions-col">Actions</th>
               </tr>
@@ -123,6 +123,7 @@ export function MakerInvoices() {
                   <td>{inv.invoiceNumber}</td>
                   <td>{formatDate(inv.invoiceDate)}</td>
                   <td>{inv.category}</td>
+                  <td>{formatMonth(inv.serviceMonth)}</td>
                   <td className="num">{formatAmount(inv.taxableAmount)}</td>
                   <td className="num">{formatAmount(inv.gstAmount)}</td>
                   <td className="num"><b>{formatAmount(inv.totalAmount)}</b></td>
@@ -130,7 +131,7 @@ export function MakerInvoices() {
                     <StageBadge stage={stage} />
                     {inv.batchId && !isEditable(stage) && <div className="muted small">{batchesById.get(inv.batchId)?.batchNo}</div>}
                   </td>
-                  <td><AttachmentLink path={inv.filePath} name={inv.fileName} /></td>
+                  <td><AttachmentLink inv={inv} /></td>
                   <td className="actions-col">
                     {canSend(inv, stage) && <button className="btn btn-sm btn-primary" onClick={() => setSending([inv])}>Send</button>}
                     {(stage === 'DRAFT' || stage === 'RETURNED') && <button className="btn btn-sm btn-primary" onClick={() => setReviewId(inv.id)}>Review &amp; validate</button>}

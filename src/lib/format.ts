@@ -36,3 +36,24 @@ export const todayIso = () => {
 export function newId(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 20);
 }
+
+/** '2026-10' → 'Oct 2026' */
+export function formatMonth(ym: string | null | undefined): string {
+  if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return '';
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleString('en-IN', { month: 'short', year: 'numeric' });
+}
+
+/** Google Drive folder for a service month, e.g. '2026-10 (October 2026)'. Sorts chronologically. */
+export function monthFolderName(ym: string): string {
+  const [y, m] = ym.split('-').map(Number);
+  return `${ym} (${new Date(y, m - 1, 1).toLocaleString('en-IN', { month: 'long' })} ${y})`;
+}
+
+export const currentMonth = () => todayIso().slice(0, 7);
+
+/** File name used in Drive: '2026-10 - Vendor - INV-1.pdf' */
+export function driveFileName(serviceMonth: string, vendor: string, invoiceNo: string, original: string): string {
+  const ext = original.includes('.') ? original.slice(original.lastIndexOf('.')) : '';
+  return `${serviceMonth} - ${vendor} - ${invoiceNo}`.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 150) + ext;
+}

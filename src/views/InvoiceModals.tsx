@@ -3,14 +3,14 @@ import { config } from '../config';
 import { saveInvoice, sendForApproval, validateInvoice as markValidated, type InvoiceInput } from '../data/actions';
 import { useStore } from '../data/store';
 import { downloadPaymentWorkbook } from '../lib/excel';
-import { formatDate, formatINR, formatLakh, round2, todayIso } from '../lib/format';
+import { currentMonth, formatDate, formatINR, formatLakh, formatMonth, monthFolderName, round2, todayIso } from '../lib/format';
 import { validateInvoice } from '../lib/validation';
 import { planBatches, routeLabel } from '../lib/workflow';
 import type { Batch, Invoice } from '../types';
 import { AttachmentLink, ErrorNote, Modal, useAction } from '../components/ui';
 
 const blank: InvoiceInput = {
-  vendorName: '', vendorGstin: '', invoiceNumber: '', invoiceDate: '', taxableAmount: NaN, gstAmount: NaN, totalAmount: NaN, category: '', notes: '',
+  vendorName: '', vendorGstin: '', invoiceNumber: '', invoiceDate: '', taxableAmount: NaN, gstAmount: NaN, totalAmount: NaN, category: '', serviceMonth: '', notes: '',
 };
 
 function ValidationList({ errors, warnings }: { errors: string[]; warnings: string[] }) {
@@ -50,6 +50,7 @@ export function InvoiceForm({ invoice, onClose, onSaved }: { invoice: Invoice | 
       throw new Error('Taxable + GST does not match the total. Correct the amounts before saving.');
     }
     if (!file && !invoice?.filePath) throw new Error('Attach the invoice copy.');
+    if (!/^\d{4}-\d{2}$/.test(f.serviceMonth)) throw new Error('Select the month in which the services were taken.');
     const id = await saveInvoice(be, me.email, invoice, f, file);
     onSaved(id);
   }
@@ -87,6 +88,10 @@ export function InvoiceForm({ invoice, onClose, onSaved }: { invoice: Invoice | 
             {config.expenseCategories.map((c) => <option key={c}>{c}</option>)}
           </select>
         </label>
+        <label>Service month *
+          <input type="month" value={f.serviceMonth} max={currentMonth().slice(0, 4) + '-12'} onChange={(e) => set('serviceMonth', e.target.value)} />
+          {f.serviceMonth && be.mode === 'firebase' && <span className="muted small">Drive folder: {monthFolderName(f.serviceMonth)}</span>}
+        </label>
         <label>Taxable amount (₹) *
           <input type="number" min="0" step="0.01" inputMode="decimal" {...num('taxableAmount')} />
         </label>
@@ -101,9 +106,9 @@ export function InvoiceForm({ invoice, onClose, onSaved }: { invoice: Invoice | 
             </button>
           )}
         </label>
-        <label className="span-2">Invoice copy (PDF / image, max {config.maxAttachmentMb} MB) {invoice?.filePath ? '' : '*'}
+        <label className="span-3">Invoice copy (PDF / image, max {config.maxAttachmentMb} MB) {invoice?.filePath ? '' : '*'}
           <input type="file" accept="application/pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-          {invoice?.filePath && !file && <span className="muted small">Current: {invoice.fileName} <AttachmentLink path={invoice.filePath} name={invoice.fileName} /></span>}
+          {invoice?.filePath && !file && <span className="muted small">Current: {invoice.fileName} <AttachmentLink inv={invoice} /></span>}
         </label>
         <label className="span-3">Notes
           <input value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="PO number, period, remarks…" />
@@ -132,10 +137,11 @@ export function ReviewModal({ invoice, onClose, onEdit, onSend }: { invoice: Inv
     ['Invoice no.', invoice.invoiceNumber],
     ['Invoice date', formatDate(invoice.invoiceDate)],
     ['Expense category', invoice.category],
+    ['Service month', formatMonth(invoice.serviceMonth)],
     ['Taxable amount', formatINR(invoice.taxableAmount)],
     ['GST amount', formatINR(invoice.gstAmount) + (result.gstRate !== null ? ` (${result.gstRate}%)` : '')],
     ['Total amount', <b key="t">{formatINR(invoice.totalAmount)}</b>],
-    ['Invoice copy', <AttachmentLink key="a" path={invoice.filePath} name={invoice.fileName} />],
+    ['Invoice copy', <AttachmentLink key="a" inv={invoice} />],
     ['Notes', invoice.notes || '—'],
   ];
 

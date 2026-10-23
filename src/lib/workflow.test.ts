@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { Batch, Invoice } from '../types';
 import { validateInvoice, makeDupKey } from './validation';
 import { nextStatusOnApprove, planBatches, requiresL3, stageOf, verifyBatchTotal } from './workflow';
-import { buildPaymentWorkbook } from './excel';
+import { allInvoiceRows, buildPaymentWorkbook, toTable } from './excel';
+import { driveFileName, monthFolderName } from './format';
 import * as XLSX from 'xlsx';
 
 const inv = (over: Partial<Invoice> = {}): Invoice => ({
   id: Math.random().toString(36).slice(2),
   vendorName: 'Acme Pvt Ltd', vendorGstin: '27ABCDE1234F1Z5', invoiceNumber: 'INV-1', invoiceDate: '2026-10-01',
-  taxableAmount: 100000, gstAmount: 18000, totalAmount: 118000, category: 'Rent', notes: '',
-  dupKey: '', filePath: 'x', fileName: 'x.pdf', status: 'VALIDATED', batchId: null,
+  taxableAmount: 100000, gstAmount: 18000, totalAmount: 118000, category: 'Rent', serviceMonth: '2026-09', notes: '',
+  dupKey: '', filePath: 'x', fileName: 'x.pdf', fileUrl: 'https://drive.google.com/file/d/x/view', status: 'VALIDATED', batchId: null,
   createdBy: 'm@x.com', createdAt: '', updatedAt: '', validatedBy: 'm@x.com', validatedAt: '', history: [],
   ...over,
 });
@@ -92,5 +93,29 @@ describe('validateInvoice', () => {
   });
   it('rejects future dates', () => {
     expect(validateInvoice({ ...base, invoiceDate: '2999-01-01' }, []).errors.join()).toMatch(/future/);
+  });
+});
+
+describe('Google Drive and Sheet layout', () => {
+  it('names month folders so they sort chronologically', () => {
+    expect(monthFolderName('2026-10')).toBe('2026-10 (October 2026)');
+    expect(monthFolderName('2027-01')).toBe('2027-01 (January 2027)');
+  });
+  it('names Drive files by month, vendor and invoice number', () => {
+    expect(driveFileName('2026-10', 'Acme / Sons: Ltd', 'INV\\7', 'scan.final.PDF')).toBe('2026-10 - Acme - Sons- Ltd - INV-7.PDF');
+    expect(driveFileName('2026-10', 'Acme', 'A1', 'noext')).toBe('2026-10 - Acme - A1');
+  });
+  it('requires a valid service month', () => {
+    const base = { ...inv(), hasAttachment: true };
+    expect(validateInvoice({ ...base, serviceMonth: '' }, []).errors.join()).toMatch(/Service month is required/);
+    expect(validateInvoice({ ...base, serviceMonth: '2026-13' }, []).errors.join()).toMatch(/not a valid month/);
+    expect(validateInvoice({ ...base, serviceMonth: '2999-01' }, []).warnings.join()).toMatch(/future/);
+  });
+  it('lists every uploaded invoice with status, service month and Drive link', () => {
+    const table = toTable(allInvoiceRows([inv({ status: 'DRAFT' })], new Map()));
+    const row = Object.fromEntries(table[0].map((h, i) => [h, table[1][i]]));
+    expect(row.Status).toBe('Draft');
+    expect(String(row['Service Month'])).toMatch(/^Sep\w* 2026$/);
+    expect(row['Invoice Copy']).toBe('https://drive.google.com/file/d/x/view');
   });
 });
