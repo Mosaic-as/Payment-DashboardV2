@@ -1,5 +1,5 @@
 import { config } from '../config';
-import type { Batch, BatchStatus, Invoice, InvoiceStage, Role } from '../types';
+import { STAGE_LABELS, type Batch, type BatchStatus, type Invoice, type InvoiceStage, type Role } from '../types';
 import { round2 } from './format';
 
 /** Which batch status each approver role acts on. */
@@ -43,7 +43,11 @@ export function stageOf(inv: Invoice, batches: Map<string, Batch>): InvoiceStage
   if (inv.batchId) {
     const b = batches.get(inv.batchId);
     // Rejected batch, or this invoice was returned on its own.
-    if (b) return b.status === 'REJECTED' || !b.invoiceIds.includes(inv.id) ? 'RETURNED' : b.status;
+    if (b) {
+      if (b.status === 'REJECTED' || !b.invoiceIds.includes(inv.id)) return 'RETURNED';
+      // Each invoice is paid on its own UTR.
+      return b.payments?.[inv.id] ? 'PAID' : b.status;
+    }
   }
   return inv.status;
 }
@@ -103,4 +107,11 @@ export function returnInfo(inv: Invoice, batches: Map<string, Batch>): { level: 
   if (b.status !== 'REJECTED') return null;
   const rej = [...b.approvals].reverse().find((a) => a.decision === 'REJECTED');
   return rej ? { level: rej.level, by: rej.by, reason: rej.comment } : null;
+}
+
+/** "With Finance" batches show how many invoices are already paid. */
+export function batchStatusLabel(b: Batch): string {
+  const paid = Object.keys(b.payments ?? {}).length;
+  if (b.status === 'WITH_FINANCE' && paid > 0) return `Partly paid (${paid}/${b.invoiceIds.length})`;
+  return STAGE_LABELS[b.status];
 }

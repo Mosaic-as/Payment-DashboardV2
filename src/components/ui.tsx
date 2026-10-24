@@ -26,8 +26,8 @@ export function Modal({ title, onClose, children, footer, wide, xl }: {
   );
 }
 
-export function StageBadge({ stage }: { stage: InvoiceStage }) {
-  return <span className={`badge badge-${stage.toLowerCase()}`}>{STAGE_LABELS[stage]}</span>;
+export function StageBadge({ stage, label }: { stage: InvoiceStage; label?: string }) {
+  return <span className={`badge badge-${stage.toLowerCase()}`}>{label ?? STAGE_LABELS[stage]}</span>;
 }
 
 export function Empty({ children }: { children: ReactNode }) {

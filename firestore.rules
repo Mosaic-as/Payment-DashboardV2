@@ -159,13 +159,25 @@ service cloud.firestore {
         && resource.data.invoiceIds.hasAll(after);
     }
 
-    function markPaid(keys) {
+    // Finance records UTRs per invoice (new or corrected). The batch becomes
+    // PAID, and is then locked, once every invoice has a payment.
+    function recordPayments(keys) {
+      let p = request.resource.data.get('payments', {});
       return resource.data.status == 'WITH_FINANCE'
-        && request.resource.data.status == 'PAID'
-        && keys.hasOnly(['status', 'paymentRef', 'paidAt', 'paidBy', 'updatedAt'])
-        && request.resource.data.paidBy == email()
-        && request.resource.data.paymentRef is string
-        && request.resource.data.paymentRef.size() > 0;
+        && keys.hasOnly(['payments', 'status', 'paidAt', 'paidBy', 'updatedAt'])
+        && p is map
+        && p.size() >= resource.data.get('payments', {}).size()
+        && resource.data.invoiceIds.hasAll(p.keys())
+        && ((request.resource.data.status == 'WITH_FINANCE' && p.size() < resource.data.invoiceIds.size())
+            || (request.resource.data.status == 'PAID' && p.size() == resource.data.invoiceIds.size()
+                && request.resource.data.paidBy == email()));
+    }
+
+    // Records whether the finance email went out (L2, L3, Finance or admin).
+    function noteMail(keys) {
+      return (resource.data.status == 'WITH_FINANCE' || resource.data.status == 'PAID')
+        && keys.hasOnly(['financeMail', 'updatedAt'])
+        && request.resource.data.get('financeMail', {}).get('by', '') == email();
     }
 
     function batchUpdate() {
@@ -176,7 +188,8 @@ service cloud.firestore {
       let next = level == 1 ? 'PENDING_L2' : (level == 2 && resource.data.requiresL3 ? 'PENDING_L3' : 'WITH_FINANCE');
       return (level > 0 && resource.data.status == at
                && (decide(keys, level, next) || returnSome(keys, level) || approveSome(keys)))
-        || (role == 'finance' && markPaid(keys));
+        || (role == 'finance' && recordPayments(keys))
+        || ((role == 'approver2' || role == 'approver3' || role == 'finance' || role == 'admin') && noteMail(keys));
     }
 
     match /batches/{batchId} {
@@ -216,10 +229,13 @@ service cloud.firestore {
       allow update, delete: if hasRole('admin');
     }
 
-    // ── Outgoing email (Firebase "Trigger Email" extension), optional ───────
-    match /mail/{id} {
-      allow create: if isUser() && get(userPath()).data.role in ['approver2', 'approver3'];
-      allow read, update, delete: if false;
+    // ── Settings (finance email recipients and mailer URL) ──────────────────
+    match /settings/{id} {
+      allow read: if isUser();
+      allow write: if hasRole('admin') && id == 'mail'
+        && request.resource.data.keys().hasOnly(['to', 'cc', 'mailerUrl'])
+        && request.resource.data.to is list && request.resource.data.cc is list
+        && request.resource.data.mailerUrl is string;
     }
   }
 }

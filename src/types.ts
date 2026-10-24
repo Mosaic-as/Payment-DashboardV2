@@ -91,6 +91,33 @@ export interface ReturnedInvoice {
   reason: string;
 }
 
+/** Payment of one invoice, recorded by Finance. */
+export interface Payment {
+  utr: string;
+  date: string; // yyyy-mm-dd
+  tds: number;
+  paid: number;
+  by: string;
+  at: string;
+}
+
+/** Result of the automatic email to the finance team. */
+export interface FinanceMail {
+  status: 'sent' | 'failed';
+  at: string;
+  by: string;
+  parts?: number;
+  error?: string;
+}
+
+/** Admin settings for the finance email (Firestore settings/mail). */
+export interface MailSettings {
+  to: string[];
+  cc: string[];
+  /** Web app URL of the Apps Script mailer that sends as User 1. */
+  mailerUrl: string;
+}
+
 export interface Batch {
   id: string;
   batchNo: string;
@@ -107,6 +134,9 @@ export interface Batch {
   returned?: ReturnedInvoice[];
   /** Invoices already approved one by one at the current level. */
   levelApproved?: string[];
+  /** Invoice id → payment. The batch becomes PAID when every invoice has one. */
+  payments?: Record<string, Payment>;
+  financeMail?: FinanceMail;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -132,7 +162,7 @@ export const STAGE_LABELS: Record<InvoiceStage, string> = {
 
 export interface WriteOp {
   type: 'set' | 'update' | 'delete';
-  col: 'invoices' | 'batches' | 'users' | 'mail' | 'vendors';
+  col: 'invoices' | 'batches' | 'users' | 'mail' | 'vendors' | 'settings';
   id: string;
   data?: Record<string, unknown>;
 }

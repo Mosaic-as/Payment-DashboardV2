@@ -11,6 +11,7 @@ import { ApprovalQueue } from './views/ApprovalQueue';
 import { FinanceQueue } from './views/FinanceQueue';
 import { AdminUsers } from './views/AdminUsers';
 import { BatchesView } from './views/BatchesView';
+import { AdminSettings } from './views/AdminSettings';
 
 type Tab = { id: string; label: string; render: () => JSX.Element };
 
@@ -27,7 +28,11 @@ function tabsFor(role: Role): Tab[] {
     case 'finance':
       return [{ id: 'finance', label: 'Payment queue', render: () => <FinanceQueue /> }, overview, batches];
     case 'admin':
-      return [overview, batches, { id: 'users', label: 'Users & roles', render: () => <AdminUsers /> }];
+      return [
+        overview, batches,
+        { id: 'users', label: 'Users & roles', render: () => <AdminUsers /> },
+        { id: 'settings', label: 'Settings', render: () => <AdminSettings /> },
+      ];
   }
 }
 

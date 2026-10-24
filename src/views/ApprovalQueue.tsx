@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { approveBatch, approveSelected, rejectBatch, returnInvoices } from '../data/actions';
+import { approveBatch, approveSelected, notifyFinance, rejectBatch, returnInvoices } from '../data/actions';
 import { useStore } from '../data/store';
 import { config } from '../config';
 import { formatDateTime, formatINR, formatLakh } from '../lib/format';
@@ -15,9 +15,14 @@ function DecisionPanel({ batch, selected, clearSelection, onDone }: {
   clearSelection: () => void;
   onDone: () => void;
 }) {
-  const { be, me, invoicesById } = useStore();
+  const { be, me, invoicesById, mailSettings, nameOf } = useStore();
   const [comment, setComment] = useState('');
   const [mode, setMode] = useState<'idle' | 'reject'>('idle');
+  // When this decision completes the approvals, email the finance team (in the
+  // background; the outcome and a Resend button show on the batch).
+  const afterDecision = (b: Batch | null | undefined) => {
+    if (b?.status === 'WITH_FINANCE') void notifyFinance(be, me.email, b, invoicesById, mailSettings, nameOf).catch(() => {});
+  };
   const { busy, error, setError, run } = useAction();
   const inputRef = useRef<HTMLInputElement>(null);
   const ok = verifyBatchTotal(batch, [...invoicesById.values()]).ok;
@@ -52,7 +57,7 @@ function DecisionPanel({ batch, selected, clearSelection, onDone }: {
             className="btn btn-danger"
             disabled={busy}
             onClick={() => !needReason('returning') && run(async () => {
-              await returnInvoices(be, me.email, batch, selected, comment, invoicesById);
+              afterDecision(await returnInvoices(be, me.email, batch, selected, comment, invoicesById));
               setComment('');
               clearSelection();
             })}
@@ -67,6 +72,7 @@ function DecisionPanel({ batch, selected, clearSelection, onDone }: {
             const moved = await approveSelected(be, me.email, batch, selected, comment, invoicesById);
             setComment('');
             clearSelection();
+            afterDecision(moved);
             if (moved) onDone();
           })}
         >
@@ -100,7 +106,7 @@ function DecisionPanel({ batch, selected, clearSelection, onDone }: {
             className="btn btn-success"
             disabled={busy || !ok}
             title={`Moves the batch to: ${next}`}
-            onClick={() => run(async () => { await approveBatch(be, me.email, batch, comment, invoicesById); onDone(); })}
+            onClick={() => run(async () => { afterDecision(await approveBatch(be, me.email, batch, comment, invoicesById)); onDone(); })}
           >
             {busy ? 'Approving…' : alreadyApproved ? `Approve remaining ${batch.invoiceIds.length - alreadyApproved} → ${next}` : `Approve all → ${next}`}
           </button>

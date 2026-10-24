@@ -1,9 +1,11 @@
 import { config } from '../config';
 import { paymentWorkbookBase64 } from '../lib/excel';
+import { financeMailHtml } from '../lib/financeMail';
 import { driveFileName, formatINR, newId, nowIso, round2 } from '../lib/format';
 import { makeDupKey } from '../lib/validation';
-import { LEVEL_OF, makeBatchNo, nextStatusOnApprove, planBatches, requiresL3, routeLabel, verifyBatchTotal } from '../lib/workflow';
-import type { AppUser, Batch, HistoryEntry, Invoice, Vendor, WriteOp } from '../types';
+import { LEVEL_OF, makeBatchNo, nextStatusOnApprove, planBatches, requiresL3, verifyBatchTotal } from '../lib/workflow';
+import type { AppUser, Batch, FinanceMail, HistoryEntry, Invoice, MailSettings, Payment, Vendor, WriteOp } from '../types';
+import type { PaymentInput } from '../lib/payments';
 import { vendorKey } from '../vendors';
 import type { Backend } from './backend';
 
@@ -163,7 +165,6 @@ export async function approveBatch(be: Backend, by: string, batch: Batch, commen
       ...(batch.levelApproved?.length ? { levelApproved: [] } : {}),
     },
   }];
-  if (updated.status === 'WITH_FINANCE' && config.financeEmail) ops.push(financeMail(updated, invoicesById));
   await be.commit(ops);
   return updated;
 }
@@ -241,40 +242,35 @@ export async function returnInvoices(be: Backend, by: string, batch: Batch, invo
       ...batch, invoiceIds: remaining, invoiceCount: remaining.length, totalAmount,
       requiresL3: requiresL3(totalAmount), levelApproved: approvedLeft,
     };
-    await approveBatch(be, by, after, '', invoicesById);
+    return approveBatch(be, by, after, '', invoicesById);
   }
+  return null;
 }
 
-export async function markPaid(be: Backend, by: string, batch: Batch, paymentRef: string) {
-  if (batch.status !== 'WITH_FINANCE') throw new Error('Only batches with finance can be marked paid.');
-  if (!paymentRef.trim()) throw new Error('Enter the payment reference / UTR.');
+/**
+ * Records UTRs for invoices of one batch (new or corrected). When every invoice
+ * in the batch has a payment, the batch becomes PAID and is locked.
+ */
+export async function recordPayments(be: Backend, by: string, batch: Batch, entries: { invoiceId: string; payment: PaymentInput }[]) {
+  if (batch.status !== 'WITH_FINANCE') throw new Error('Payments can only be recorded while the batch is with Finance.');
   const now = nowIso();
+  const payments: Record<string, Payment> = { ...(batch.payments ?? {}) };
+  for (const { invoiceId, payment } of entries) {
+    if (!batch.invoiceIds.includes(invoiceId)) throw new Error('An invoice is not part of this batch.');
+    payments[invoiceId] = { ...payment, utr: payment.utr.trim().toUpperCase(), by, at: now };
+  }
+  const allPaid = batch.invoiceIds.every((id) => payments[id]);
   await be.commit([{
     type: 'update', col: 'batches', id: batch.id,
-    data: { status: 'PAID', paymentRef: paymentRef.trim(), paidAt: now, paidBy: by, updatedAt: now },
+    data: {
+      payments,
+      updatedAt: now,
+      ...(allPaid ? { status: 'PAID', paidAt: now, paidBy: by } : {}),
+    },
   }]);
+  return allPaid;
 }
 
-function financeMail(batch: Batch, invoicesById: Map<string, Invoice>): WriteOp {
-  return {
-    type: 'set', col: 'mail', id: newId(),
-    data: {
-      to: config.financeEmail.split(',').map((s: string) => s.trim()),
-      message: {
-        subject: `Payment batch ${batch.batchNo} (${batch.category}) approved — ${formatINR(batch.totalAmount)}`,
-        html:
-          `<p>Batch <b>${batch.batchNo}</b> has completed approval (${routeLabel(batch.requiresL3)}) and is ready for payment.</p>` +
-          `<p>Category: ${batch.category}<br>Invoices: ${batch.invoiceCount}<br>Total: <b>${formatINR(batch.totalAmount)}</b></p>` +
-          `<p>The invoice-wise Excel is attached. Open the dashboard to view invoice copies and record payment.</p>`,
-        attachments: [{
-          filename: `${batch.batchNo}.xlsx`,
-          content: paymentWorkbookBase64([batch], invoicesById),
-          encoding: 'base64',
-        }],
-      },
-    },
-  };
-}
 
 export async function saveUser(be: Backend, u: AppUser) {
   const email = u.email.trim().toLowerCase();
@@ -299,4 +295,41 @@ export async function addVendor(be: Backend, by: string, existing: Vendor[], nam
   if (dup) return dup;
   await be.commit([{ type: 'set', col: 'vendors', id, data: { name: clean, gstin: g, createdBy: by, createdAt: nowIso() } }]);
   return { id, name: clean, gstin: g, custom: true };
+}
+
+export async function saveMailSettings(be: Backend, settings: MailSettings) {
+  await be.commit([{ type: 'set', col: 'settings', id: 'mail', data: { ...settings } }]);
+}
+
+/** Records whether the finance email went out (shown on the batch, with Resend). */
+export async function noteFinanceMail(be: Backend, batch: Batch, mail: FinanceMail) {
+  await be.commit([{ type: 'update', col: 'batches', id: batch.id, data: { financeMail: mail, updatedAt: nowIso() } }]);
+}
+
+/**
+ * Emails the finance team (from User 1's mailbox via the mailer) with the
+ * batch Excel and invoice PDFs. The outcome is recorded on the batch.
+ */
+export async function notifyFinance(
+  be: Backend, by: string, batch: Batch, invoicesById: Map<string, Invoice>,
+  settings: MailSettings | null, nameOf: (e: string) => string, resend = false,
+) {
+  if (!be.sendFinanceMail) return;
+  try {
+    if (!settings?.mailerUrl) throw new Error('The finance email is not set up yet (admin: Settings → Finance email).');
+    if (!settings.to?.length) throw new Error('No finance email recipients are set (admin: Settings → Finance email).');
+    const invoices = batch.invoiceIds.map((id) => invoicesById.get(id)).filter((i): i is Invoice => !!i);
+    const { parts } = await be.sendFinanceMail(settings.mailerUrl, {
+      batchId: batch.id,
+      html: financeMailHtml(batch, invoices, nameOf, location.origin + location.pathname),
+      excelBase64: paymentWorkbookBase64([batch], invoicesById),
+      excelName: `${batch.batchNo}.xlsx`,
+      resend,
+    });
+    await noteFinanceMail(be, batch, { status: 'sent', at: nowIso(), by, parts });
+  } catch (e) {
+    const error = (e as Error).message || String(e);
+    await noteFinanceMail(be, batch, { status: 'failed', at: nowIso(), by, error }).catch(() => {});
+    throw e;
+  }
 }

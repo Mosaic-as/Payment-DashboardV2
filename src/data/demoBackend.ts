@@ -1,4 +1,4 @@
-import type { AppUser, Batch, Invoice, SessionUser, WriteOp } from '../types';
+import type { AppUser, Batch, Invoice, MailSettings, SessionUser, WriteOp } from '../types';
 import type { Backend } from './backend';
 
 /**
@@ -10,7 +10,7 @@ const KEY = 'ipa-demo-db-v3';
 const SESSION_KEY = 'ipa-demo-session';
 const FILE_PREFIX = 'ipa-demo-file:';
 
-type Db = { invoices: Record<string, unknown>; batches: Record<string, unknown>; users: Record<string, unknown>; mail: Record<string, unknown>; vendors: Record<string, unknown> };
+type Db = { invoices: Record<string, unknown>; batches: Record<string, unknown>; users: Record<string, unknown>; mail: Record<string, unknown>; vendors: Record<string, unknown>; settings: Record<string, unknown> };
 
 export const DEMO_USERS: AppUser[] = [
   { email: 'maker@mosaicwellness.in', name: 'Riya (User 1)', role: 'maker', active: true },
@@ -30,8 +30,8 @@ function safeSet(key: string, value: string) {
 
 function load(): Db {
   const raw = safeGet(KEY);
-  if (raw) return { vendors: {}, ...JSON.parse(raw) };
-  const db: Db = { invoices: {}, batches: {}, users: {}, mail: {}, vendors: {} };
+  if (raw) return { vendors: {}, settings: {}, ...JSON.parse(raw) };
+  const db: Db = { invoices: {}, batches: {}, users: {}, mail: {}, vendors: {}, settings: {} };
   for (const u of DEMO_USERS) db.users[u.email] = u;
   return db;
 }
@@ -82,6 +82,16 @@ export function createDemoBackend(): Backend {
     subscribeInvoices: (cb) => sub<Invoice>('invoices', cb),
     subscribeBatches: (cb) => sub<Batch>('batches', cb),
     subscribeUsers: (cb) => sub<AppUser>('users', cb),
+    subscribeSettings(cb) {
+      const fire = () => cb((db.settings.mail as MailSettings | undefined) ?? null);
+      listeners.vendors.add(fire);
+      fire();
+      return () => void listeners.vendors.delete(fire);
+    },
+    // Demo: nothing is emailed; the batch just records that it "went out".
+    async sendFinanceMail() {
+      return { parts: 1 };
+    },
     subscribeVendors: (cb) => sub<{ id: string; name: string; gstin: string }>('vendors', cb),
     async commit(ops: WriteOp[]) {
       const next: Db = JSON.parse(JSON.stringify(db));

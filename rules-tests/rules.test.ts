@@ -7,8 +7,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
 import type { Backend } from '../src/data/backend';
 import {
-  addVendor, approveBatch, approveSelected, markPaid, rejectBatch, returnInvoices, saveInvoice,
-  sendForApproval, validateInvoice, type InvoiceInput,
+  addVendor, approveBatch, approveSelected, noteFinanceMail, recordPayments, rejectBatch, returnInvoices, saveInvoice,
+  saveMailSettings, sendForApproval, validateInvoice, type InvoiceInput,
 } from '../src/data/actions';
 import type { Batch, Invoice, Role, WriteOp } from '../src/types';
 
@@ -76,6 +76,9 @@ async function makeBatch(totals: number[], category?: string) {
   return sendForApproval(be, MAKER, invoices.filter((i) => i.status === 'VALIDATED' && !i.batchId));
 }
 
+const pay = (b: Batch, ids = b.invoiceIds, utr = 'SBIN426012345678') =>
+  ids.map((invoiceId) => ({ invoiceId, payment: { utr, date: '2026-10-20', tds: 0, paid: 1 } }));
+
 async function batchFor(email: string, id: string) {
   const { db } = backendAs(email);
   const s = await load(db);
@@ -115,7 +118,7 @@ describe('full approval chain', () => {
     }
     let { batch } = await batchFor(FIN, b.id);
     expect(batch.status).toBe('WITH_FINANCE');
-    await assertSucceeds(markPaid(backendAs(FIN).be, FIN, batch, 'UTR123'));
+    await assertSucceeds(recordPayments(backendAs(FIN).be, FIN, batch, pay(batch)));
     ({ batch } = await batchFor(FIN, b.id));
     expect(batch.status).toBe('PAID');
   });
@@ -136,7 +139,7 @@ describe('full approval chain', () => {
       await assertFails(approveBatch(backendAs(who).be, who, batch, '', invoicesById));
     }
     const { batch } = await batchFor(FIN, b.id);
-    await assertFails(markPaid(backendAs(FIN).be, FIN, { ...batch, status: 'WITH_FINANCE' }, 'X'));
+    await assertFails(recordPayments(backendAs(FIN).be, FIN, { ...batch, status: 'WITH_FINANCE' }, pay(batch)));
   });
 
   it('whole-batch reject returns invoices to User 1, who can fix and resend', async () => {
@@ -203,7 +206,10 @@ describe('large batches stay within the rules evaluation limit', () => {
     expect(batch.status).toBe('PENDING_L2');
     await assertSucceeds(approveBatch(backendAs(A2).be, A2, batch, '', invoicesById));
     ({ batch } = await batchFor(FIN, b.id));
-    await assertSucceeds(markPaid(backendAs(FIN).be, FIN, batch, 'UTR-40'));
+    await assertSucceeds(recordPayments(backendAs(FIN).be, FIN, batch, pay(batch, batch.invoiceIds.slice(0, 50))));
+    ({ batch } = await batchFor(FIN, b.id));
+    await assertSucceeds(recordPayments(backendAs(FIN).be, FIN, batch, pay(batch, batch.invoiceIds.slice(50))));
+    expect((await batchFor(FIN, b.id)).batch.status).toBe('PAID');
   });
 
   it('L2 can return an invoice and reject a batch', async () => {
@@ -214,6 +220,57 @@ describe('large batches stay within the rules evaluation limit', () => {
     await assertSucceeds(returnInvoices(backendAs(A2).be, A2, batch, [batch.invoiceIds[0]], 'duplicate', invoicesById));
     ({ batch } = await batchFor(A2, b.id));
     await assertSucceeds(rejectBatch(backendAs(A2).be, A2, batch, 'wrong period'));
+  });
+});
+
+describe('payments per invoice and the finance email', () => {
+  async function toFinance(totals: number[]) {
+    const [b] = await makeBatch(totals);
+    for (const who of [A1, A2]) {
+      const { batch, invoicesById } = await batchFor(who, b.id);
+      await approveBatch(backendAs(who).be, who, batch, '', invoicesById);
+    }
+    return b.id;
+  }
+
+  it('finance records UTRs in parts, corrects one, and the batch locks once fully paid', async () => {
+    const id = await toFinance([10_000, 20_000, 30_000]);
+    let { batch } = await batchFor(FIN, id);
+    const [a, b, c] = batch.invoiceIds;
+    await assertSucceeds(recordPayments(backendAs(FIN).be, FIN, batch, pay(batch, [a])));
+    ({ batch } = await batchFor(FIN, id));
+    expect(batch.status).toBe('WITH_FINANCE');
+    await assertSucceeds(recordPayments(backendAs(FIN).be, FIN, batch, pay(batch, [a], 'HDFC0000000000000001'))); // correction
+    ({ batch } = await batchFor(FIN, id));
+    expect(batch.payments?.[a].utr).toBe('HDFC0000000000000001');
+    await assertSucceeds(recordPayments(backendAs(FIN).be, FIN, batch, pay(batch, [b, c])));
+    ({ batch } = await batchFor(FIN, id));
+    expect(batch.status).toBe('PAID');
+    expect(batch.paidBy).toBe(FIN);
+    await assertFails(recordPayments(backendAs(FIN).be, FIN, { ...batch, status: 'WITH_FINANCE' }, pay(batch, [a], 'ICIC0000000000000002')));
+  });
+
+  it('only finance can record payments, and only for invoices in the batch', async () => {
+    const id = await toFinance([10_000]);
+    const { batch } = await batchFor(FIN, id);
+    await assertFails(recordPayments(backendAs(A2).be, A2, batch, pay(batch)));
+    await assertFails(recordPayments(backendAs(FIN).be, FIN, { ...batch, invoiceIds: [...batch.invoiceIds, 'other'] }, pay(batch, ['other'])));
+  });
+
+  it('L2/L3/finance/admin can record the email outcome; others cannot', async () => {
+    const id = await toFinance([10_000]);
+    const { batch } = await batchFor(A2, id);
+    await assertSucceeds(noteFinanceMail(backendAs(A2).be, batch, { status: 'sent', at: 'now', by: A2, parts: 1 }));
+    await assertSucceeds(noteFinanceMail(backendAs(FIN).be, batch, { status: 'failed', at: 'now', by: FIN, error: 'x' }));
+    await assertFails(noteFinanceMail(backendAs(A1).be, batch, { status: 'sent', at: 'now', by: A1 }));
+    await assertFails(noteFinanceMail(backendAs(A2).be, batch, { status: 'sent', at: 'now', by: FIN })); // must be yourself
+  });
+
+  it('only an admin can change the email settings; everyone can read them', async () => {
+    const s = { to: [`fin@${D}`], cc: [`cfo@${D}`], mailerUrl: 'https://script.google.com/macros/s/abc/exec' };
+    await assertSucceeds(saveMailSettings(backendAs(ADMIN).be, s));
+    await assertFails(saveMailSettings(backendAs(FIN).be, s));
+    await assertSucceeds(backendAs(A1).db.collection('settings').doc('mail').get());
   });
 });
 

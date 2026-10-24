@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AppUser, Batch, Invoice, SessionUser, Vendor } from '../types';
+import type { AppUser, Batch, Invoice, MailSettings, SessionUser, Vendor } from '../types';
 import { DEFAULT_VENDORS, vendorKey } from '../vendors';
 import type { Backend } from './backend';
 
@@ -19,6 +19,7 @@ interface Store {
   loaded: boolean;
   sheet: SheetSync;
   syncSheetNow: () => void;
+  mailSettings: MailSettings | null;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -28,6 +29,7 @@ export function StoreProvider({ be: rawBe, me, children }: { be: Backend; me: St
   const [batches, setBatches] = useState<Batch[] | null>(null);
   const [users, setUsers] = useState<AppUser[]>([]);
   const [customVendors, setCustomVendors] = useState<{ id: string; name: string; gstin: string }[]>([]);
+  const [mailSettings, setMailSettings] = useState<MailSettings | null>(null);
   const [sheet, setSheet] = useState<SheetSync>({ state: rawBe.syncSheet ? 'idle' : 'off' });
   const latest = useRef({ invoices: [] as Invoice[], batches: [] as Batch[] });
   latest.current = { invoices: invoices ?? [], batches: batches ?? [] };
@@ -36,7 +38,7 @@ export function StoreProvider({ be: rawBe, me, children }: { be: Backend; me: St
   useEffect(() => {
     const subs = [
       rawBe.subscribeInvoices(setInvoices), rawBe.subscribeBatches(setBatches),
-      rawBe.subscribeUsers(setUsers), rawBe.subscribeVendors(setCustomVendors),
+      rawBe.subscribeUsers(setUsers), rawBe.subscribeVendors(setCustomVendors), rawBe.subscribeSettings(setMailSettings),
     ];
     return () => subs.forEach((u) => u());
   }, [rawBe]);
@@ -98,8 +100,9 @@ export function StoreProvider({ be: rawBe, me, children }: { be: Backend; me: St
       loaded: invoices !== null && batches !== null,
       sheet,
       syncSheetNow: () => syncSheetNow(0),
+      mailSettings,
     };
-  }, [be, me, invoices, batches, users, vendors, sheet, syncSheetNow]);
+  }, [be, me, invoices, batches, users, vendors, sheet, syncSheetNow, mailSettings]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -1,4 +1,15 @@
-import type { AppUser, Batch, Invoice, SessionUser, WriteOp } from '../types';
+import type { AppUser, Batch, Invoice, MailSettings, SessionUser, WriteOp } from '../types';
+
+export interface FinanceMailRequest {
+  batchId: string;
+  html: string;
+  excelBase64: string;
+  excelName: string;
+  /** Send again even if this batch's email already went out. */
+  resend: boolean;
+  /** Setup check: the mailer only sends a short test email to the caller. */
+  test?: boolean;
+}
 
 /**
  * Storage/auth abstraction. Business logic (src/data/actions.ts) only talks to
@@ -14,6 +25,9 @@ export interface Backend {
   subscribeUsers(cb: (rows: AppUser[]) => void): () => void;
   /** Vendors added by users (the built-in list is in src/vendors.ts). */
   subscribeVendors(cb: (rows: { id: string; name: string; gstin: string }[]) => void): () => void;
+  subscribeSettings(cb: (mail: MailSettings | null) => void): () => void;
+  /** Asks the mailer (running as User 1) to email the finance team. */
+  sendFinanceMail?(mailerUrl: string, req: FinanceMailRequest): Promise<{ parts: number }>;
   /** Applies all operations atomically. */
   commit(ops: WriteOp[]): Promise<void>;
   /** Stores an invoice copy (Drive: in the service-month folder). */

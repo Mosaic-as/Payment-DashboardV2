@@ -3,7 +3,7 @@ import { config } from '../config';
 import { useStore } from '../data/store';
 import { downloadPaymentWorkbook } from '../lib/excel';
 import { formatDateTime, formatINR, todayIso } from '../lib/format';
-import { routeLabel } from '../lib/workflow';
+import { batchStatusLabel, routeLabel } from '../lib/workflow';
 import { STAGE_LABELS, type BatchStatus } from '../types';
 import { BatchDetail } from '../components/BatchDetail';
 import { Empty, StageBadge } from '../components/ui';
@@ -63,7 +63,7 @@ export function BatchesView() {
                   <td>{b.batchNo}</td><td>{b.category}</td><td>{b.invoiceCount}</td>
                   <td className="num"><b>{formatINR(b.totalAmount)}</b></td>
                   <td className="small">{routeLabel(b.requiresL3)}</td>
-                  <td><StageBadge stage={b.status} /></td>
+                  <td><StageBadge stage={b.status} label={batchStatusLabel(b)} /></td>
                   <td className="small">{nameOf(b.createdBy)}</td>
                   <td className="small">{formatDateTime(b.updatedAt)}</td>
                 </tr>

@@ -31,7 +31,12 @@ Upload invoice → Review & Validate → Send ──────▶ Approve ─�
 * If the service month, vendor or invoice number is corrected later, the Drive file is moved to the correct folder and renamed.
 * After validation, User 1 can **send** one invoice right away, or select many invoices and **send them in bulk**. Selected invoices are grouped into **one batch per expense category**. An Excel file is downloaded, and the Google Sheet is updated.
 * The **₹20 lakh rule** applies to the **batch total**. A batch above ₹20,00,000 goes to User 4. Otherwise, User 3's approval sends it straight to Finance. The rule is also enforced on the server in `firestore.rules`.
-* **Finance** sees the approved batches, downloads the Excel or uses the Google Sheet, and records the payment reference (UTR).
+* **Finance email:** when the last required approval is given (L2 for batches up to ₹20 lakh, L3 above), the finance team gets an email **from User 1's mailbox**. The To and CC lists are set by an admin under *Settings*. The email body has the batch summary, the approval trail, the invoice table and any returned invoices. The batch Excel and every invoice copy are attached. If the copies exceed Gmail's size limit, the rest follow in "invoice copies part 2 of N" emails, and the main body stays unchanged. The batch shows whether the email went out, and L2, L3, Finance or an admin can **Resend** it.
+* **Finance records payments per invoice:** a UTR, payment date, TDS and amount paid for each invoice. There are two ways to do it:
+  * **Bulk:** *⬇ UTR template* gives an Excel of every unpaid invoice. Fill in the UTRs, then use *⬆ Upload UTRs*. A preview shows the rows ready to record, the problems (rows that will be skipped) and any warnings before anything is saved.
+  * **One by one:** use the *Enter payments* table on the batch screen. This is also where a UTR is corrected.
+
+  Several invoices of the same vendor can share one UTR. The same UTR on different vendors is flagged. A batch shows *Partly paid (x/y)* until every invoice has a UTR, and then it becomes **Paid** and is locked.
 * The top bar has **📁 Drive** and **📊 Sheet** links. The sheet link shows whether the last update succeeded and offers **Retry** if it failed.
 
 ## Try it locally (demo mode)
@@ -90,7 +95,19 @@ In the repository, go to **Settings → Secrets and variables → Actions → Va
 
 Then go to **Settings → Pages → Source** and choose **GitHub Actions**. Open the **Actions** tab, select **Deploy dashboard to GitHub Pages** and click **Run workflow**. The site is published at <https://mosaic-as.github.io/Payment-DashboardV2/>. Every push to `main` deploys again.
 
-### 5. Add users
+### 5. Finance email (sent as User 1)
+This is a one-time setup that **User 1 does while signed in with their own Google account**. Finance emails are then sent from User 1's mailbox.
+
+1. Open <https://script.google.com>, click **New project**, and name it `Finance mailer`.
+2. Delete the sample code. Paste the whole of [`apps-script/FinanceMailer.gs`](apps-script/FinanceMailer.gs), then press **Ctrl + S**.
+3. Select the `authorize` function in the toolbar and click **▶ Run**. Allow the permissions it asks for: Gmail (send), Drive (read the invoice copies) and external requests (read the dashboard database).
+4. Click **Deploy → New deployment**. Choose the type **Web app**, set *Execute as* to **Me** and *Who has access* to **Anyone**, then click **Deploy**. Copy the **Web app URL**, which ends in `/exec`.
+   * *Anyone* is needed so the dashboard can reach the script. The script still checks every request: the caller must be signed in to the dashboard and be an active L2, L3, Finance or admin user.
+5. An admin opens **Settings** in the dashboard and pastes the URL into *Mailer URL*. They add the **To** (finance team) and **CC** (stakeholders) addresses, click **Save**, then click **Send test email to me**.
+
+If User 1 changes, the new User 1 repeats steps 1–4 and the admin updates the URL. After editing the script code, use **Deploy → Manage deployments → Edit → Version: New version**, so the URL stays the same.
+
+### 6. Add users
 Sign in to the site as the admin and add people under **Users & roles**. The roles are `maker` (User 1), `approver1` (User 2), `approver2` (User 3), `approver3` (User 4), `finance` and `admin`. Remember to share the Drive folder and the Sheet with each person too (step 3).
 
 ## Security model
@@ -104,6 +121,8 @@ Sign in to the site as the admin and add people under **Users & roles**. The rol
 | The L3 routing flag must equal `total > ₹20 L`, and it can't change after creation | Firestore rules |
 | Rejection needs a reason. Approval history is append-only. Batches can't be deleted | Firestore rules |
 | Invoice copies and the register follow Google Drive and Sheets sharing | The folder and sheet permissions you set in step 3 |
+| Payments are recorded only by Finance, only for invoices in the batch, and are locked once the batch is paid | Firestore rules |
+| The finance email can't be faked: the mailer reads the caller's role, the batch, the invoices and the recipients from Firestore | `apps-script/FinanceMailer.gs` |
 
 **Known limitations**
 * The Google Sheet is a **copy** of the workflow data that's rewritten after each action. If one update fails, for example because someone lacks edit access, the next successful update fixes it. **Retry** in the top bar forces an update.
@@ -119,6 +138,9 @@ src/vendors.ts              built-in vendor list
 src/lib/validation.ts       invoice checks
 src/lib/workflow.ts         routing, batching, stage logic
 src/lib/excel.ts            Excel export and Google Sheet rows (same columns)
+src/lib/payments.ts         UTR template, upload checks
+src/lib/financeMail.ts      finance email body
+apps-script/FinanceMailer.gs  mailer that sends as User 1 (Google Apps Script)
 src/lib/google.ts           Google Drive (month folders) and Google Sheets
 src/data/actions.ts         all state changes
 src/data/firebaseBackend.ts Firebase sign-in and Firestore, plus Drive and Sheets

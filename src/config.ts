@@ -81,12 +81,6 @@ export const config = {
     'Warehouse - Subscription',
   ],
 
-  /**
-   * Optional email to the finance team when a batch is cleared for payment.
-   * Requires the Firebase "Trigger Email from Firestore" extension, writing
-   * to the `mail` collection. Leave empty to rely on the in-app finance queue.
-   */
-  financeEmail: env.VITE_FINANCE_EMAIL || '',
 
   maxAttachmentMb: 10,
 };

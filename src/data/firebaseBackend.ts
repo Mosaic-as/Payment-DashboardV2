@@ -17,7 +17,7 @@ import {
   GOOGLE_SCOPES, clearGoogleToken, driveViewUrl, getAccessToken, loadGoogleIdentity, relocateDriveFile,
   setGoogleHint, setGoogleToken, uploadToDrive, writeSheetTabs,
 } from '../lib/google';
-import type { AppUser, Batch, Invoice } from '../types';
+import type { AppUser, Batch, Invoice, MailSettings } from '../types';
 import type { Backend } from './backend';
 
 const emailOf = (u: User) => (u.email ?? u.providerData.find((p) => p.email)?.email ?? '').toLowerCase();
@@ -95,6 +95,28 @@ export function createFirebaseBackend(): Backend {
 
     subscribeInvoices: (cb) => listen<Invoice>('invoices', cb),
     subscribeBatches: (cb) => listen<Batch>('batches', cb),
+    subscribeSettings: (cb) => onSnapshot(
+      doc(db, 'settings', 'mail'),
+      (snap) => cb(snap.exists() ? (snap.data() as MailSettings) : null),
+      () => cb(null),
+    ),
+
+    async sendFinanceMail(mailerUrl, req) {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error('Not signed in.');
+      // text/plain keeps this a "simple" request, which Apps Script accepts cross-origin.
+      const res = await fetch(mailerUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ ...req, idToken, dashboardOrigin: location.origin }),
+      });
+      const text = await res.text();
+      let out: { ok?: boolean; parts?: number; error?: string };
+      try { out = JSON.parse(text); } catch { throw new Error(`Mailer returned an unexpected response (HTTP ${res.status}). Check the mailer URL in Settings.`); }
+      if (!out.ok) throw new Error(out.error || 'The mailer could not send the email.');
+      return { parts: out.parts ?? 1 };
+    },
+
     subscribeVendors: (cb) => listen<{ id: string; name: string; gstin: string }>('vendors', cb),
     subscribeUsers: (cb) => listen<AppUser>('users', (rows) => cb(rows.map((r) => ({ ...r, email: (r as AppUser & { id: string }).id })))),
 

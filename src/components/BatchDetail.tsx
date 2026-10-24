@@ -2,10 +2,11 @@ import { useState, type ReactNode } from 'react';
 import { useStore } from '../data/store';
 import { downloadPaymentWorkbook } from '../lib/excel';
 import { formatAmount, formatDate, formatDateTime, formatINR, formatLakh, formatMonth } from '../lib/format';
-import { routeLabel, verifyBatchTotal } from '../lib/workflow';
+import { batchStatusLabel, routeLabel, verifyBatchTotal } from '../lib/workflow';
+import { notifyFinance } from '../data/actions';
 import { config } from '../config';
-import type { Batch, Invoice } from '../types';
-import { AttachmentLink, Modal, StageBadge } from './ui';
+import type { Batch, Invoice, Payment } from '../types';
+import { AttachmentLink, ErrorNote, Modal, StageBadge, useAction } from './ui';
 
 type StepState = 'done' | 'current' | 'todo' | 'skipped' | 'rejected';
 
@@ -56,8 +57,10 @@ function Timeline({ batch }: { batch: Batch }) {
   );
 }
 
-export function BatchInvoicesTable({ invoices, selected, onToggle, approved }: {
+export function BatchInvoicesTable({ invoices, selected, onToggle, approved, payments }: {
   invoices: Invoice[];
+  /** Recorded UTRs, shown as extra columns once Finance has entered any. */
+  payments?: Record<string, Payment>;
   /** Invoices already approved one by one at the current level. */
   approved?: Set<string>;
   /** When given, rows get tick boxes (approver returning single invoices). */
@@ -65,6 +68,7 @@ export function BatchInvoicesTable({ invoices, selected, onToggle, approved }: {
   onToggle?: (id: string) => void;
 }) {
   const selectable = !!selected && !!onToggle && invoices.length > 1;
+  const showPaid = !!payments && Object.keys(payments).length > 0;
   return (
     <div className="table-wrap">
       <table className="table">
@@ -72,7 +76,9 @@ export function BatchInvoicesTable({ invoices, selected, onToggle, approved }: {
           <tr>
             {selectable && <th className="check-col" title="Tick invoices to return them to User 1" />}
             <th>Vendor</th><th>GSTIN</th><th>Invoice no.</th><th>Date</th><th>Service month</th>
-            <th className="num">Taxable</th><th className="num">GST</th><th className="num">Total</th><th>Copy</th>
+            <th className="num">Taxable</th><th className="num">GST</th><th className="num">Total</th>
+            {showPaid && <><th>UTR</th><th>Paid on</th><th className="num">TDS</th><th className="num">Paid</th></>}
+            <th>Copy</th>
           </tr>
         </thead>
         <tbody>
@@ -91,6 +97,14 @@ export function BatchInvoicesTable({ invoices, selected, onToggle, approved }: {
               <td className="num">{formatAmount(i.taxableAmount)}</td>
               <td className="num">{formatAmount(i.gstAmount)}</td>
               <td className="num"><b>{formatAmount(i.totalAmount)}</b></td>
+              {showPaid && (payments![i.id] ? (
+                <>
+                  <td className="mono small">{payments![i.id].utr}</td>
+                  <td>{formatDate(payments![i.id].date)}</td>
+                  <td className="num">{formatAmount(payments![i.id].tds)}</td>
+                  <td className="num">{formatAmount(payments![i.id].paid)}</td>
+                </>
+              ) : <td colSpan={4} className="muted small">Not paid yet</td>)}
               <td>
                 <AttachmentLink inv={i} />
                 {approved?.has(i.id) && <span className="badge badge-paid tick-approved">✓ Approved</span>}
@@ -99,6 +113,35 @@ export function BatchInvoicesTable({ invoices, selected, onToggle, approved }: {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** Whether the finance team was emailed, with Resend for those who may send it. */
+function FinanceMailStatus({ batch }: { batch: Batch }) {
+  const { be, me, invoicesById, mailSettings, nameOf } = useStore();
+  const { busy, error, run } = useAction();
+  if (batch.status !== 'WITH_FINANCE' && batch.status !== 'PAID') return null;
+  if (!be.sendFinanceMail) return null;
+  const m = batch.financeMail;
+  const canSend = ['approver2', 'approver3', 'finance', 'admin'].includes(me.profile.role);
+  return (
+    <div className={`note ${m?.status === 'sent' ? 'note-ok' : m?.status === 'failed' ? 'note-error' : 'note-warn'} mail-status`}>
+      <span>
+        {m?.status === 'sent' && <>✉ Finance team emailed by {nameOf(m.by)} on {formatDateTime(m.at)}{m.parts && m.parts > 1 ? ` (${m.parts} emails — invoice copies split for size)` : ''}.</>}
+        {m?.status === 'failed' && <>✉ Finance email not sent ({formatDateTime(m.at)}): {m.error}</>}
+        {!m && <>✉ Finance email not sent yet.</>}
+      </span>
+      {canSend && (
+        <button
+          className="btn btn-sm btn-outline"
+          disabled={busy}
+          onClick={() => run(() => notifyFinance(be, me.email, batch, invoicesById, mailSettings, nameOf, true))}
+        >
+          {busy ? 'Sending…' : m?.status === 'sent' ? 'Resend email' : 'Send email'}
+        </button>
+      )}
+      <ErrorNote error={error} />
     </div>
   );
 }
@@ -133,10 +176,12 @@ function ReturnedList({ batch }: { batch: Batch }) {
  * actions: footer buttons. Pass a function to let the approver tick invoices;
  * it receives the ticked ids and a callback to clear them.
  */
-export function BatchDetail({ batch, onClose, actions }: {
+export function BatchDetail({ batch, onClose, actions, extra }: {
   batch: Batch;
   onClose: () => void;
   actions?: ReactNode | ((selectedIds: string[], clear: () => void) => ReactNode);
+  /** Shown below the invoices (e.g. Finance's payment entry). */
+  extra?: ReactNode;
 }) {
   const { invoicesById } = useStore();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -153,7 +198,7 @@ export function BatchDetail({ batch, onClose, actions }: {
     <Modal
       wide
       onClose={onClose}
-      title={<>Batch {batch.batchNo} <StageBadge stage={batch.status} /></>}
+      title={<>Batch {batch.batchNo} <StageBadge stage={batch.status} label={batchStatusLabel(batch)} /></>}
       footer={
         <>
           <button className="btn btn-outline" onClick={() => downloadPaymentWorkbook([batch], invoicesById, `${batch.batchNo}.xlsx`)}>
@@ -179,6 +224,7 @@ export function BatchDetail({ batch, onClose, actions }: {
         </div>
       )}
       <Timeline batch={batch} />
+      <FinanceMailStatus batch={batch} />
       {selectable && invoices.length > 1 && (
         <p className="muted small">
           Tick invoices to approve or return them one by one. The batch moves to the next level once every invoice left in it is approved.
@@ -189,7 +235,9 @@ export function BatchDetail({ batch, onClose, actions }: {
         selected={selectable ? selected : undefined}
         onToggle={selectable ? toggle : undefined}
         approved={new Set(batch.levelApproved ?? [])}
+        payments={batch.payments}
       />
+      {extra}
       <ReturnedList batch={batch} />
     </Modal>
   );

@@ -1,8 +1,8 @@
 import * as XLSX from 'xlsx';
-import type { Batch, Invoice } from '../types';
+import type { Batch, Invoice, Payment } from '../types';
 import { STAGE_LABELS } from '../types';
-import { formatDateTime, formatMonth } from './format';
-import { returnInfo, routeLabel, stageOf } from './workflow';
+import { formatDateTime, formatMonth, round2 } from './format';
+import { batchStatusLabel, returnInfo, routeLabel, stageOf } from './workflow';
 
 type Row = Record<string, string | number>;
 
@@ -32,6 +32,13 @@ const invoiceCols = (i: Invoice): Row => ({
   'Validated At': formatDateTime(i.validatedAt),
 });
 
+const paymentCols = (p: Payment | undefined): Row => ({
+  UTR: p?.utr ?? '',
+  'Payment Date': p?.date ?? '',
+  TDS: p ? p.tds : '',
+  'Amount Paid': p ? p.paid : '',
+});
+
 /** One row per batch with its approval trail. */
 export function batchSummaryRows(batches: Batch[]): Row[] {
   return batches.map((b) => ({
@@ -48,8 +55,10 @@ export function batchSummaryRows(batches: Batch[]): Row[] {
     ...approvalCols(b, 1),
     ...approvalCols(b, 2),
     ...approvalCols(b, 3),
-    'Payment Ref / UTR': b.paymentRef ?? '',
-    'Paid At': formatDateTime(b.paidAt),
+    'Invoices Paid': `${Object.keys(b.payments ?? {}).length}/${b.invoiceIds.length}`,
+    'TDS Total': round2(Object.values(b.payments ?? {}).reduce((s, p) => s + p.tds, 0)),
+    'Amount Paid Total': round2(Object.values(b.payments ?? {}).reduce((s, p) => s + p.paid, 0)),
+    'Fully Paid At': formatDateTime(b.paidAt),
     'Returned Invoices': (b.returned ?? []).map((r) => `${r.invoiceNumber} (L${r.level}: ${r.reason})`).join('; '),
   }));
 }
@@ -63,8 +72,8 @@ export function invoiceDetailRows(batches: Batch[], invoicesById: Map<string, In
       .map((i) => ({
         'Batch No': b.batchNo,
         ...invoiceCols(i),
-        'Batch Status': STAGE_LABELS[b.status],
-        'Payment Ref / UTR': b.paymentRef ?? '',
+        'Batch Status': batchStatusLabel(b),
+        ...paymentCols(b.payments?.[i.id]),
         'Invoice Copy': i.fileUrl || i.fileName,
       })),
   );
@@ -78,6 +87,7 @@ export function allInvoiceRows(invoices: Invoice[], batchesById: Map<string, Bat
     ...invoiceCols(i),
     'Uploaded At': formatDateTime(i.createdAt),
     'Return Reason': returnInfo(i, batchesById)?.reason ?? '',
+    ...paymentCols(i.batchId ? batchesById.get(i.batchId)?.payments?.[i.id] : undefined),
     'Invoice Copy': i.fileUrl || i.fileName,
   }));
 }
@@ -114,8 +124,8 @@ function sheet(rows: Row[], amountCols: string[]) {
 /** Builds the finance workbook: a batch summary sheet plus one row per invoice. */
 export function buildPaymentWorkbook(batches: Batch[], invoicesById: Map<string, Invoice>): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, sheet(batchSummaryRows(batches), ['Taxable Total', 'GST Total', 'Batch Total']), 'Batch Summary');
-  XLSX.utils.book_append_sheet(wb, sheet(invoiceDetailRows(batches, invoicesById), ['Taxable Amount', 'GST Amount', 'Total Amount']), 'Invoice Details');
+  XLSX.utils.book_append_sheet(wb, sheet(batchSummaryRows(batches), ['Taxable Total', 'GST Total', 'Batch Total', 'TDS Total', 'Amount Paid Total']), 'Batch Summary');
+  XLSX.utils.book_append_sheet(wb, sheet(invoiceDetailRows(batches, invoicesById), ['Taxable Amount', 'GST Amount', 'Total Amount', 'TDS', 'Amount Paid']), 'Invoice Details');
   return wb;
 }
 
