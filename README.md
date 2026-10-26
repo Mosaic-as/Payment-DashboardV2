@@ -9,6 +9,8 @@ A multi-user invoice approval dashboard for **mosaicwellness.in**. It's a static
   * **Batches**: one row per batch, with its approval trail.
 * **Cloud Firestore** (Firebase) stores the approval workflow behind the scenes. A sheet can be edited by anyone with access, so the workflow itself lives in Firestore, where server-side rules decide who may approve what.
 
+> **For the company IT team:** [`docs/IT-README.md`](docs/IT-README.md) is the technical handover. It covers the architecture, data model, the rules the server must enforce, the target design for company servers, the API, migration and operations. The business requirements are in the BRD, shared separately.
+
 ## Workflow
 
 ```
