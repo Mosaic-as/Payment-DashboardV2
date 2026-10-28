@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
 import type { Backend } from '../src/data/backend';
 import {
-  addVendor, approveBatch, approveSelected, noteFinanceMail, recordPayments, rejectBatch, returnInvoices, saveInvoice,
+  addVendor, approveBatch, saveUser, approveSelected, noteFinanceMail, recordPayments, rejectBatch, returnInvoices, saveInvoice,
   saveMailSettings, sendForApproval, validateInvoice, type InvoiceInput,
 } from '../src/data/actions';
 import type { Batch, Invoice, Role, WriteOp } from '../src/types';
@@ -304,6 +304,20 @@ describe('super user (all roles)', () => {
     await assertSucceeds(returnInvoices(backendAs(SU).be, SU, batch, [batch.invoiceIds[0]], 'wrong', invoicesById));
     ({ batch } = await batchFor(SU, b.id));
     await assertSucceeds(rejectBatch(backendAs(SU).be, SU, batch, 'redo'));
+  });
+});
+
+describe('user management', () => {
+  it('admin can make another user a super user, and change their own role to super user', async () => {
+    const { be } = backendAs(ADMIN);
+    await assertSucceeds(saveUser(be, { email: MAKER, name: 'Tamjeed', role: 'superuser', active: true }));
+    await assertSucceeds(saveUser(be, { email: `new.person@${D}`, name: 'New', role: 'superuser', active: true }));
+    await assertSucceeds(saveUser(be, { email: ADMIN, name: 'Asif', role: 'superuser', active: true }));
+  });
+  it('a super user can manage users; an admin cannot demote itself to a non-admin role', async () => {
+    await setRole(MAKER, 'superuser');
+    await assertSucceeds(saveUser(backendAs(MAKER).be, { email: A1, name: 'A1', role: 'approver2', active: true }));
+    await assertFails(saveUser(backendAs(ADMIN).be, { email: ADMIN, name: 'Asif', role: 'maker', active: true }));
   });
 });
 
