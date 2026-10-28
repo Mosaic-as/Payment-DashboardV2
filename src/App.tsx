@@ -27,6 +27,15 @@ function tabsFor(role: Role): Tab[] {
       return [{ id: 'queue', label: 'Approval queue', render: () => <ApprovalQueue /> }, overview, batches];
     case 'finance':
       return [{ id: 'finance', label: 'Payment queue', render: () => <FinanceQueue /> }, overview, batches];
+    case 'superuser':
+      return [
+        { id: 'invoices', label: 'My invoices', render: () => <MakerInvoices /> },
+        { id: 'queue', label: 'Approval queue', render: () => <ApprovalQueue /> },
+        { id: 'finance', label: 'Payment queue', render: () => <FinanceQueue /> },
+        overview, batches,
+        { id: 'users', label: 'Users & roles', render: () => <AdminUsers /> },
+        { id: 'settings', label: 'Settings', render: () => <AdminSettings /> },
+      ];
     case 'admin':
       return [
         overview, batches,

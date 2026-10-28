@@ -1,4 +1,4 @@
-export type Role = 'maker' | 'approver1' | 'approver2' | 'approver3' | 'finance' | 'admin';
+export type Role = 'maker' | 'approver1' | 'approver2' | 'approver3' | 'finance' | 'admin' | 'superuser';
 
 export const ROLE_LABELS: Record<Role, string> = {
   maker: 'Invoice Maker (User 1)',
@@ -7,6 +7,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   approver3: 'Approver L3 (User 4)',
   finance: 'Finance Team',
   admin: 'Administrator',
+  superuser: 'Super user (all roles)',
 };
 
 export interface AppUser {

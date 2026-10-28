@@ -15,7 +15,7 @@
 const PROJECT_ID = 'payment-dashboard-51222';
 const ALLOWED_DOMAIN = 'mosaicwellness.in';
 const SENDER_NAME = 'Invoice Payment Approvals';
-const SENDER_ROLES = ['approver2', 'approver3', 'finance', 'admin'];
+const SENDER_ROLES = ['approver2', 'approver3', 'finance', 'admin', 'superuser'];
 // Gmail allows 25 MB per email including encoding overhead (~33%).
 const MAX_ATTACHMENT_BYTES = 17 * 1024 * 1024;
 
@@ -46,7 +46,7 @@ function doPost(e) {
       return json_({ ok: true, parts: 1 });
     }
 
-    if (SENDER_ROLES.indexOf(caller.role) < 0) throw new Error('Only L2/L3 approvers, Finance or an admin can send the finance email.');
+    if (SENDER_ROLES.indexOf(caller.role) < 0) throw new Error('Only L2/L3 approvers, Finance, an admin or a super user can send the finance email.');
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(req.batchId || '')) throw new Error('Invalid batch.');
 
     const batch = getDoc_('batches/' + req.batchId, req.idToken);

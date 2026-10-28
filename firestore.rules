@@ -27,7 +27,8 @@ service cloud.firestore {
     }
     function userPath() { return /databases/$(database)/documents/users/$(email()); }
     function isUser() { return companyAccount() && exists(userPath()) && get(userPath()).data.active == true; }
-    function hasRole(r) { return isUser() && get(userPath()).data.role == r; }
+    // A super user holds every role.
+    function hasRole(r) { return isUser() && get(userPath()).data.role in [r, 'superuser']; }
 
     function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
     function unchanged(keys) { return !changed().hasAny(keys); }
@@ -40,10 +41,10 @@ service cloud.firestore {
         && userEmail == userEmail.lower()
         && userEmail.matches(companyDomain())
         && request.resource.data.keys().hasOnly(['name', 'role', 'active'])
-        && request.resource.data.role in ['maker', 'approver1', 'approver2', 'approver3', 'finance', 'admin']
+        && request.resource.data.role in ['maker', 'approver1', 'approver2', 'approver3', 'finance', 'admin', 'superuser']
         && request.resource.data.active is bool
         // admins cannot demote or disable themselves (avoids lock-out)
-        && (userEmail != email() || (request.resource.data.role == 'admin' && request.resource.data.active == true));
+        && (userEmail != email() || (request.resource.data.role in ['admin', 'superuser'] && request.resource.data.active == true));
       allow delete: if hasRole('admin') && userEmail != email();
     }
 
@@ -183,13 +184,16 @@ service cloud.firestore {
     function batchUpdate() {
       let role = get(userPath()).data.role;
       let keys = request.resource.data.diff(resource.data).affectedKeys();
-      let level = role == 'approver1' ? 1 : (role == 'approver2' ? 2 : (role == 'approver3' ? 3 : 0));
+      let status = resource.data.status;
+      // A super user acts at whatever level the batch is at.
+      let level = role == 'approver1' ? 1 : (role == 'approver2' ? 2 : (role == 'approver3' ? 3
+        : (role == 'superuser' ? (status == 'PENDING_L1' ? 1 : (status == 'PENDING_L2' ? 2 : (status == 'PENDING_L3' ? 3 : 0))) : 0)));
       let at = level == 1 ? 'PENDING_L1' : (level == 2 ? 'PENDING_L2' : (level == 3 ? 'PENDING_L3' : 'none'));
       let next = level == 1 ? 'PENDING_L2' : (level == 2 && resource.data.requiresL3 ? 'PENDING_L3' : 'WITH_FINANCE');
       return (level > 0 && resource.data.status == at
                && (decide(keys, level, next) || returnSome(keys, level) || approveSome(keys)))
-        || (role == 'finance' && recordPayments(keys))
-        || ((role == 'approver2' || role == 'approver3' || role == 'finance' || role == 'admin') && noteMail(keys));
+        || ((role == 'finance' || role == 'superuser') && recordPayments(keys))
+        || ((role == 'approver2' || role == 'approver3' || role == 'finance' || role == 'admin' || role == 'superuser') && noteMail(keys));
     }
 
     match /batches/{batchId} {
@@ -219,7 +223,7 @@ service cloud.firestore {
     // vendor can't be added twice.
     match /vendors/{vendorId} {
       allow read: if isUser();
-      allow create: if isUser() && get(userPath()).data.role in ['maker', 'admin']
+      allow create: if isUser() && get(userPath()).data.role in ['maker', 'admin', 'superuser']
         && vendorId.matches('^[a-z0-9]{2,120}$')
         && request.resource.data.keys().hasOnly(['name', 'gstin', 'createdBy', 'createdAt'])
         && request.resource.data.name is string

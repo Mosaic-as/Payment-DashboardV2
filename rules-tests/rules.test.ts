@@ -274,6 +274,39 @@ describe('payments per invoice and the finance email', () => {
   });
 });
 
+describe('super user (all roles)', () => {
+  const SU = `super.user@${D}`;
+
+  it('uploads, sends, approves at L1, L2 and L3, records payments and manages settings', async () => {
+    await setRole(SU, 'superuser');
+    const { be, db } = backendAs(SU);
+    const id = await saveInvoice(be, SU, null, input('SU-1', 2_360_000), new File(['%PDF'], 'x.pdf'));
+    await assertSucceeds(validateInvoice(be, SU, (await load(db)).invoicesById.get(id)!, []));
+    const [b] = await sendForApproval(be, SU, [(await load(db)).invoicesById.get(id)!]);
+    expect(b.requiresL3).toBe(true);
+    for (const expected of ['PENDING_L2', 'PENDING_L3', 'WITH_FINANCE']) {
+      const { batch, invoicesById } = await batchFor(SU, b.id);
+      await assertSucceeds(approveBatch(be, SU, batch, '', invoicesById));
+      expect((await batchFor(SU, b.id)).batch.status).toBe(expected);
+    }
+    const { batch } = await batchFor(SU, b.id);
+    await assertSucceeds(noteFinanceMail(be, batch, { status: 'sent', at: 'now', by: SU, parts: 1 }));
+    await assertSucceeds(recordPayments(be, SU, (await batchFor(SU, b.id)).batch, pay(batch)));
+    expect((await batchFor(SU, b.id)).batch.status).toBe('PAID');
+    await assertSucceeds(saveMailSettings(be, { to: [`fin@${D}`], cc: [], mailerUrl: '' }));
+    await assertSucceeds(addVendor(be, SU, [], 'Super Vendor', ''));
+  });
+
+  it('can return and reject like any approver', async () => {
+    await setRole(SU, 'superuser');
+    const [b] = await makeBatch([10_000, 20_000]);
+    let { batch, invoicesById } = await batchFor(SU, b.id);
+    await assertSucceeds(returnInvoices(backendAs(SU).be, SU, batch, [batch.invoiceIds[0]], 'wrong', invoicesById));
+    ({ batch } = await batchFor(SU, b.id));
+    await assertSucceeds(rejectBatch(backendAs(SU).be, SU, batch, 'redo'));
+  });
+});
+
 describe('vendors', () => {
   it('maker can add a vendor, approver cannot', async () => {
     await assertSucceeds(addVendor(backendAs(MAKER).be, MAKER, [], 'Kalyan Movers', '27ABCDE1234F1Z5'));

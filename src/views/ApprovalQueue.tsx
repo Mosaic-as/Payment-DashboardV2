@@ -3,7 +3,7 @@ import { approveBatch, approveSelected, notifyFinance, rejectBatch, returnInvoic
 import { useStore } from '../data/store';
 import { config } from '../config';
 import { formatDateTime, formatINR, formatLakh } from '../lib/format';
-import { LEVEL_OF, ROLE_QUEUE, nextStatusOnApprove, routeLabel, verifyBatchTotal } from '../lib/workflow';
+import { LEVEL_OF, nextStatusOnApprove, queueStatuses, routeLabel, verifyBatchTotal } from '../lib/workflow';
 import { STAGE_LABELS, type Batch } from '../types';
 import { BatchDetail } from '../components/BatchDetail';
 import { Empty, ErrorNote, StageBadge, useAction } from '../components/ui';
@@ -118,11 +118,13 @@ function DecisionPanel({ batch, selected, clearSelection, onDone }: {
 
 export function ApprovalQueue() {
   const { me, batches, nameOf, loaded } = useStore();
-  const status = ROLE_QUEUE[me.profile.role]!;
-  const level = LEVEL_OF[status]!;
+  const statuses = queueStatuses(me.profile.role);
+  const all = statuses.length > 1; // super user: every level
+  const level = LEVEL_OF[statuses[0]]!;
+  const mineAt = (a: { level: number; by: string }) => a.by === me.email && (all || a.level === level);
   const [openId, setOpenId] = useState<string | null>(null);
-  const queue = batches.filter((b) => b.status === status).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
-  const mine = batches.filter((b) => b.approvals.some((a) => a.level === level && a.by === me.email)).slice(0, 20);
+  const queue = batches.filter((b) => statuses.includes(b.status)).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+  const mine = batches.filter((b) => b.approvals.some(mineAt)).slice(0, 20);
   const open = openId ? batches.find((b) => b.id === openId) : undefined;
   const total = queue.reduce((s, b) => s + b.totalAmount, 0);
 
@@ -130,10 +132,10 @@ export function ApprovalQueue() {
     <section>
       <div className="page-head">
         <div>
-          <h1>Approval queue — Level {level}</h1>
+          <h1>Approval queue — {all ? 'all levels (L1, L2, L3)' : `Level ${level}`}</h1>
           <p className="muted">
             {queue.length} batch(es) awaiting your approval · {formatINR(total)}
-            {level === 2 && ` · Batches above ${formatLakh(config.l3Threshold)} go to L3 after you; others go straight to Finance.`}
+            {(all || level === 2) && ` · Batches above ${formatLakh(config.l3Threshold)} go to L3 after you; others go straight to Finance.`}
           </p>
         </div>
       </div>
@@ -143,7 +145,7 @@ export function ApprovalQueue() {
           {queue.map((b) => (
             <button key={b.id} className="batch-card" onClick={() => setOpenId(b.id)}>
               <div className="batch-card-head">
-                <b>{b.category}</b>
+                <b>{all && <span className="level-tag">L{LEVEL_OF[b.status]}</span>}{b.category}</b>
                 <span className={`route ${b.requiresL3 ? 'route-l3' : ''}`}>{routeLabel(b.requiresL3)}</span>
               </div>
               <div className="batch-card-amt">{formatINR(b.totalAmount)}</div>
@@ -162,11 +164,11 @@ export function ApprovalQueue() {
             <thead><tr><th>Batch</th><th>Category</th><th className="num">Total</th><th>Your decision</th><th>Current status</th></tr></thead>
             <tbody>
               {mine.map((b) => {
-                const a = [...b.approvals].reverse().find((x) => x.level === level && x.by === me.email)!;
+                const a = [...b.approvals].reverse().find(mineAt)!;
                 return (
                   <tr key={b.id} className="clickable" onClick={() => setOpenId(b.id)}>
                     <td>{b.batchNo}</td><td>{b.category}</td><td className="num">{formatINR(b.totalAmount)}</td>
-                    <td>{a.decision === 'APPROVED' ? '✓ Approved' : '✕ Rejected'} <span className="muted small">{formatDateTime(a.at)}</span></td>
+                    <td>{all && `L${a.level} · `}{a.decision === 'APPROVED' ? '✓ Approved' : '✕ Rejected'} <span className="muted small">{formatDateTime(a.at)}</span></td>
                     <td><StageBadge stage={b.status} /></td>
                   </tr>
                 );
@@ -180,7 +182,7 @@ export function ApprovalQueue() {
         <BatchDetail
           batch={open}
           onClose={() => setOpenId(null)}
-          actions={open.status === status
+          actions={statuses.includes(open.status)
             ? (selected, clear) => <DecisionPanel batch={open} selected={selected} clearSelection={clear} onDone={() => setOpenId(null)} />
             : undefined}
         />

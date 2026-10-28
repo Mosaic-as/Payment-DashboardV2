@@ -19,6 +19,7 @@ export const DEMO_USERS: AppUser[] = [
   { email: 'approver3@mosaicwellness.in', name: 'Vikram (User 4)', role: 'approver3', active: true },
   { email: 'finance@mosaicwellness.in', name: 'Finance Team', role: 'finance', active: true },
   { email: 'admin@mosaicwellness.in', name: 'Admin', role: 'admin', active: true },
+  { email: 'superuser@mosaicwellness.in', name: 'Super user', role: 'superuser', active: true },
 ];
 
 function safeGet(key: string): string | null {
@@ -30,9 +31,11 @@ function safeSet(key: string, value: string) {
 
 function load(): Db {
   const raw = safeGet(KEY);
-  if (raw) return { vendors: {}, settings: {}, ...JSON.parse(raw) };
-  const db: Db = { invoices: {}, batches: {}, users: {}, mail: {}, vendors: {}, settings: {} };
-  for (const u of DEMO_USERS) db.users[u.email] = u;
+  const db: Db = raw
+    ? { vendors: {}, settings: {}, ...JSON.parse(raw) }
+    : { invoices: {}, batches: {}, users: {}, mail: {}, vendors: {}, settings: {} };
+  // Demo users added in later versions also appear in older saved demo data.
+  for (const u of DEMO_USERS) db.users[u.email] ??= u;
   return db;
 }
 

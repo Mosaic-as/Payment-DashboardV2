@@ -10,6 +10,13 @@ export const ROLE_QUEUE: Partial<Record<Role, BatchStatus>> = {
   finance: 'WITH_FINANCE',
 };
 
+/** Approval statuses a role works on; a super user acts at every level. */
+export function queueStatuses(role: Role): BatchStatus[] {
+  if (role === 'superuser') return ['PENDING_L1', 'PENDING_L2', 'PENDING_L3'];
+  const s = ROLE_QUEUE[role];
+  return s && s !== 'WITH_FINANCE' ? [s] : [];
+}
+
 export const LEVEL_OF: Partial<Record<BatchStatus, 1 | 2 | 3>> = {
   PENDING_L1: 1,
   PENDING_L2: 2,

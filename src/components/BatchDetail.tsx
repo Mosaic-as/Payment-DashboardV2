@@ -124,7 +124,7 @@ function FinanceMailStatus({ batch }: { batch: Batch }) {
   if (batch.status !== 'WITH_FINANCE' && batch.status !== 'PAID') return null;
   if (!be.sendFinanceMail) return null;
   const m = batch.financeMail;
-  const canSend = ['approver2', 'approver3', 'finance', 'admin'].includes(me.profile.role);
+  const canSend = ['approver2', 'approver3', 'finance', 'admin', 'superuser'].includes(me.profile.role);
   return (
     <div className={`note ${m?.status === 'sent' ? 'note-ok' : m?.status === 'failed' ? 'note-error' : 'note-warn'} mail-status`}>
       <span>
